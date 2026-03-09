@@ -58,11 +58,18 @@ Total : 134 files,  11085 codes, 1762 comments, 1932 blanks, all 14779 lines
 
 ### 短期目标（v0.2.0）
 - skills功能的实现, mcp的使用优化（比如按需显示mcp工具文档，避免上下文爆炸）
+    - 差异对比工具重构
+    - 两个skills工具内置，不允许关闭
+    - 重构前端章节文件板块
+        - 查询功能,类obsidian
+        - 后缀支持
+        - .gitignore，userignore和aiignore
+        - 增加功能 ———— 下方的命令行输入栏
+
 
 - 完善工具调用功能
     - 工具功能优化
-        - 开始修工具调用————每个工具文档要简化————工具要重构，否则不方便简化，比如切分掉过于复杂的工具————还是看看langchain吧，不清楚文档能不能删大部分
-        - 减轻ai工具负担（尤其是重复的工具函数文档 和 args_schema）
+        - 开始修工具调用————工具文档要简化,主要用法放在数据模型里
         - 增加专门的删除工具，避免ai混用
         - apply_diff允许不按行号进行相似度匹配，然后成功应用并提醒行号错误
         - 新增memory_edit工具，允许ai直接编辑自己的上下文（？）
@@ -133,10 +140,15 @@ Total : 134 files,  11085 codes, 1762 comments, 1932 blanks, all 14779 lines
     python main.py
     ```
 
-5. **浏览器访问**：
-    浏览器访问localhost:3000
+4. **浏览器访问**：
+    浏览器访问http://localhost:3000
 
-
+5. **其他启动方式**:
+    从根目录开始
+    ```bash
+    cd frontend
+    npm run electron-dev
+    ```
 
 
 ## 贡献

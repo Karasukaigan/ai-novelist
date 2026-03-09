@@ -47,7 +47,8 @@ function ChapterTreeItem({ item, level, props }: ChapterTreeItemProps) {
   const itemTitle = item.title || '';
   const isFolder = item.isFolder || item.type === 'folder';
   const hasChildren = item.children && item.children.length > 0;
-  const displayName = new DisplayNameHelper(itemTitle, isFolder).removeSuffix().getValue();
+  // 不再移除文件后缀，直接显示完整文件名
+  const displayName = itemTitle;
 
   const inputRef = useRef<HTMLInputElement>(null);
   const [editingValue, setEditingValue] = useState('');
@@ -85,8 +86,8 @@ function ChapterTreeItem({ item, level, props }: ChapterTreeItemProps) {
         return;
       }
 
-      // 只有文件才添加 .md 后缀发送给后端
-      const finalName = isFolder ? editingValue : (editingValue.endsWith('.md') ? editingValue : editingValue + '.md');
+      // 不再强制添加 .md 后缀，直接使用用户输入的名称
+      const finalName = editingValue;
       // 检查名称是否真的改变了
       if (finalName === itemTitle) {
         // 名称未改变，直接取消编辑

@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { faSearch } from '@fortawesome/free-solid-svg-icons';
+import { useDispatch } from 'react-redux';
+import { addTab, setActiveTab } from '../store/editor';
 import SidebarComponent from './SidebarComponent';
 import ProviderSettingsPanel from './aiprovider/ProviderSettingsPanel';
 import RagManagementPanel from './rag/KnowledgeBasePanel';
@@ -7,6 +11,8 @@ import AgentPanel from './agent/AgentPanel';
 import MCPSettingsPanel from './mcp/MCPSettingsPanel';
 import WindowControls from './others/WindowControls';
 import SidebarLogoWithStatus from './others/SidebarLogoWithStatus';
+import SearchPanel from './search/SearchPanel';
+import httpClient from '../utils/httpClient';
 
 interface LayoutComponentProps {
   chapterPanel: React.ReactNode;
@@ -15,7 +21,9 @@ interface LayoutComponentProps {
 }
 
 function LayoutComponent({ chapterPanel, editorPanel, chatPanel }: LayoutComponentProps) {
+  const dispatch = useDispatch();
   const [activePanel, setActivePanel] = useState<string | null>(null); // 'api' | 'rag' | 'agent' | 'mcp' | null
+  const [showSearchPanel, setShowSearchPanel] = useState(false);
   const [leftPanelSize, setLeftPanelSize] = useState(15);
   const [rightPanelSize, setRightPanelSize] = useState(25);
 
@@ -29,11 +37,29 @@ function LayoutComponent({ chapterPanel, editorPanel, chatPanel }: LayoutCompone
     setRightPanelSize(size);
   };
 
+  // 处理搜索结果中的文件选择
+  const handleFileSelect = async (filePath: string) => {
+    try {
+      const response = await httpClient.get(`/api/file/read/${filePath}`);
+      dispatch(addTab({ id: response.id, content: response.content }));
+      dispatch(setActiveTab({ tabId: filePath }));
+    } catch (error) {
+      console.error('获取文件内容失败:', error);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="h-[3%] bg-theme-black flex items-center justify-between px-0 select-none window-drag-region border-b border-theme-gray2">
-        <div className="flex items-center px-2" style={{ WebkitAppRegion: 'no-drag' } as any}>
+        <div className="flex items-center px-2 gap-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
           <SidebarLogoWithStatus />
+          <button
+            onClick={() => setShowSearchPanel(true)}
+            className="p-2 hover:bg-theme-gray3 rounded transition-colors"
+            title="搜索文件"
+          >
+            <FontAwesomeIcon icon={faSearch} className="text-theme-white text-sm" />
+          </button>
         </div>
         <WindowControls />
       </div>
@@ -98,6 +124,14 @@ function LayoutComponent({ chapterPanel, editorPanel, chatPanel }: LayoutCompone
             <MCPSettingsPanel />
           )}
         </div>
+      )}
+
+      {/* 搜索面板 - 全屏覆盖 */}
+      {showSearchPanel && (
+        <SearchPanel
+          onClose={() => setShowSearchPanel(false)}
+          onFileSelect={handleFileSelect}
+        />
       )}
       </div>
     </div>
