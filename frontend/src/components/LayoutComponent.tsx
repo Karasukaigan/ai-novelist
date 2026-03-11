@@ -1,7 +1,5 @@
-import { useState } from 'react';
-import { PanelGroup, Panel, PanelResizeHandle } from 'react-resizable-panels';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faSearch } from '@fortawesome/free-solid-svg-icons';
+import { useState, useRef, useEffect } from 'react';
+import { PanelGroup, Panel, PanelResizeHandle, type ImperativePanelHandle } from 'react-resizable-panels';
 import { useDispatch } from 'react-redux';
 import { addTab, setActiveTab } from '../store/editor';
 import SidebarComponent from './SidebarComponent';
@@ -9,8 +7,7 @@ import ProviderSettingsPanel from './aiprovider/ProviderSettingsPanel';
 import RagManagementPanel from './rag/KnowledgeBasePanel';
 import AgentPanel from './agent/AgentPanel';
 import MCPSettingsPanel from './mcp/MCPSettingsPanel';
-import WindowControls from './others/WindowControls';
-import SidebarLogoWithStatus from './others/SidebarLogoWithStatus';
+import TopActionBar from './others/TopActionBar';
 import SearchPanel from './search/SearchPanel';
 import httpClient from '../utils/httpClient';
 
@@ -23,9 +20,22 @@ interface LayoutComponentProps {
 function LayoutComponent({ chapterPanel, editorPanel, chatPanel }: LayoutComponentProps) {
   const dispatch = useDispatch();
   const [activePanel, setActivePanel] = useState<string | null>(null); // 'api' | 'rag' | 'agent' | 'mcp' | null
-  const [showSearchPanel, setShowSearchPanel] = useState(false);
+  const [isLeftPanelCollapsed, setIsLeftPanelCollapsed] = useState(false); // 是否折叠
+  const [leftPanelContent, setLeftPanelContent] = useState<'chapter' | 'search'>('chapter'); // 展开时显示的内容
   const [leftPanelSize, setLeftPanelSize] = useState(15);
   const [rightPanelSize, setRightPanelSize] = useState(25);
+  const leftPanelRef = useRef<ImperativePanelHandle>(null);
+
+  // 同步折叠状态
+  useEffect(() => {
+    if (leftPanelRef.current) {
+      if (isLeftPanelCollapsed) {
+        leftPanelRef.current.collapse();
+      } else {
+        leftPanelRef.current.expand();
+      }
+    }
+  }, [isLeftPanelCollapsed]);
 
   // 处理左侧面板尺寸变化
   const handleLeftPanelChange = (size: number) => {
@@ -35,6 +45,19 @@ function LayoutComponent({ chapterPanel, editorPanel, chatPanel }: LayoutCompone
   // 处理右侧面板尺寸变化
   const handleRightPanelChange = (size: number) => {
     setRightPanelSize(size);
+  };
+
+  // 切换左侧面板折叠状态
+  const handleToggleCollapse = () => {
+    setIsLeftPanelCollapsed(prev => !prev);
+  };
+
+  // 切换左侧面板内容
+  const handleLeftPanelContentChange = (content: 'chapter' | 'search') => {
+    setLeftPanelContent(content);
+    if (isLeftPanelCollapsed) {
+      setIsLeftPanelCollapsed(false);
+    }
   };
 
   // 处理搜索结果中的文件选择
@@ -50,35 +73,41 @@ function LayoutComponent({ chapterPanel, editorPanel, chatPanel }: LayoutCompone
 
   return (
     <div className="flex flex-col h-full">
-      <div className="h-[3%] bg-theme-black flex items-center justify-between px-0 select-none window-drag-region border-b border-theme-gray2">
-        <div className="flex items-center px-2 gap-3" style={{ WebkitAppRegion: 'no-drag' } as any}>
-          <SidebarLogoWithStatus />
-          <button
-            onClick={() => setShowSearchPanel(true)}
-            className="p-2 hover:bg-theme-gray3 rounded transition-colors"
-            title="搜索文件"
-          >
-            <FontAwesomeIcon icon={faSearch} className="text-theme-white text-sm" />
-          </button>
-        </div>
-        <WindowControls />
-      </div>
+      <TopActionBar
+        isLeftPanelCollapsed={isLeftPanelCollapsed}
+        leftPanelContent={leftPanelContent}
+        onToggleCollapse={handleToggleCollapse}
+        onLeftPanelContentChange={handleLeftPanelContentChange}
+      />
       <div className="h-[97%] flex-grow flex">
       <PanelGroup direction="horizontal" className="flex-grow flex h-full overflow-hidden min-h-0">
         {/* 左侧组件栏 - 固定宽度 */}
         <div className="bg-theme-black p-0 w-[50px] flex-shrink-0 overflow-hidden border-r border-theme-gray3">
-          <SidebarComponent activePanel={activePanel} setActivePanel={setActivePanel} />
+          <SidebarComponent
+            activePanel={activePanel}
+            setActivePanel={setActivePanel}
+          />
         </div>
         
-        {/* 章节面板 */}
+        {/* 左侧面板 - 章节列表或搜索面板 */}
         <Panel
-          defaultSize={leftPanelSize} /* 使用 defaultSize 允许用户拖动 */
-          minSize={0} /* 允许完全隐藏 */
-          maxSize={100} /* 允许全范围拖动 */
+          ref={leftPanelRef}
+          defaultSize={leftPanelSize}
+          minSize={0}
+          maxSize={100}
+          collapsible={true}
+          onResize={handleLeftPanelChange}
+          onCollapse={() => setIsLeftPanelCollapsed(true)}
+          onExpand={() => setIsLeftPanelCollapsed(false)}
           className="bg-theme-black p-0"
-          onResize={handleLeftPanelChange} /* 监听尺寸变化 */
         >
-          {chapterPanel}
+          {leftPanelContent === 'chapter' && chapterPanel}
+          {leftPanelContent === 'search' && (
+            <SearchPanel
+              onFileSelect={handleFileSelect}
+              embedded={true} /* 嵌入模式，不是全屏覆盖 */
+            />
+          )}
         </Panel>
         
         <PanelResizeHandle className="w-[1px] bg-theme-gray3 cursor-ew-resize flex-shrink-0 relative" />
@@ -126,13 +155,6 @@ function LayoutComponent({ chapterPanel, editorPanel, chatPanel }: LayoutCompone
         </div>
       )}
 
-      {/* 搜索面板 - 全屏覆盖 */}
-      {showSearchPanel && (
-        <SearchPanel
-          onClose={() => setShowSearchPanel(false)}
-          onFileSelect={handleFileSelect}
-        />
-      )}
       </div>
     </div>
   );

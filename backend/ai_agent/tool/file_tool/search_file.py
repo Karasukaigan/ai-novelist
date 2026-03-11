@@ -3,7 +3,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 from langchain.tools import tool
 from backend.config.config import settings
-from backend.file.ripgrep_service import ripgrep_service
+from backend.file.file_service import search_files_for_ai
 
 class SearchFilesInput(BaseModel):
     path: Optional[str] = Field(default=None, description="搜索路径，不填则搜索根目录")
@@ -39,18 +39,8 @@ async def search_file(path: Optional[str] = None, regex: str = None) -> str:
     try:
         display_path = path if path else "根目录"
         
-        if path is None or path == "":
-            search_path = None
-            display_path = "根目录"
-        else:
-            search_path = path
-            display_path = path
-        
-        results = await ripgrep_service.search(
-            query=regex,
-            directory=search_path,
-            case_sensitive=False
-        )
+        # 使用 search_files_for_ai 进行搜索（已内置 .aiignore 过滤）
+        results = await search_files_for_ai(regex)
         
         if results:
             return f"【工具结果】：在 '{display_path}' 中找到匹配项：\n\n{results}"

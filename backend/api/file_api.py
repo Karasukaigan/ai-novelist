@@ -119,7 +119,7 @@ async def api_update_content(file_path: str, request: UpdateContentRequest):
     return Response(status_code=204)
 
 
-@router.get("/search", summary="搜索文件", response_model=List[dict])
+@router.get("/search", summary="搜索文件")
 async def api_search_files(query: str):
     """搜索文件内容"""
     results = await search_files_for_user(query)

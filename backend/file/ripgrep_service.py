@@ -20,8 +20,9 @@ class RipgrepSearchService:
         directory: Optional[str] = None,
         file_pattern: Optional[str] = None,
         case_sensitive: bool = False,
-        max_results: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+        max_results: Optional[int] = None,
+        ignore_file: Optional[str] = None
+    ) -> str:
         try:
             if directory:
                 search_dir = self.data_dir / directory
@@ -53,11 +54,15 @@ class RipgrepSearchService:
             cmd.append("--no-heading")
             cmd.append("--color=never")
             
-            # 使用 .gitignore 文件过滤
-            gitignore_path = self.data_dir / ".gitignore"
-            if gitignore_path.exists():
-                cmd.append("--ignore-file")
-                cmd.append(str(gitignore_path))
+            # 使用传入的 ignore_file 文件过滤
+            if ignore_file:
+                ignore_path = Path(ignore_file)
+                if ignore_path.exists():
+                    print(f"传入的ignore文件{ignore_path}")
+                    # 禁用 .gitignore 等VCS ignore文件，只使用指定的 ignore_file
+                    cmd.append("--no-ignore-vcs")
+                    cmd.append("--ignore-file")
+                    cmd.append(str(ignore_path))
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -81,10 +86,10 @@ class RipgrepSearchService:
             
         except FileNotFoundError:
             logger.error("ripgrep 未安装，请先安装 ripgrep")
-            return []
+            return ""
         except Exception as e:
             logger.error(f"搜索失败: {e}")
-            return []
+            return ""
 
 
 ripgrep_service = RipgrepSearchService()

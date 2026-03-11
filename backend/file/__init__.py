@@ -11,7 +11,6 @@ from backend.file.file_service import (
     copy_file,
     search_files,
     search_files_for_user,
-    search_files_for_ai,
     upload_image,
 )
 
@@ -28,6 +27,5 @@ __all__ = [
     "copy_file",
     "search_files",
     "search_files_for_user",
-    "search_files_for_ai",
     "upload_image",
 ]

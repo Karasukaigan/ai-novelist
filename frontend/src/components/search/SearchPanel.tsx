@@ -9,11 +9,12 @@ interface SearchResult {
 }
 
 interface SearchPanelProps {
-  onClose: () => void;
+  onClose?: () => void;
   onFileSelect: (filePath: string) => void;
+  embedded?: boolean; // 是否为嵌入模式
 }
 
-const SearchPanel = ({ onClose, onFileSelect }: SearchPanelProps) => {
+const SearchPanel = ({ onClose, onFileSelect, embedded = false }: SearchPanelProps) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Record<string, SearchResult>>({});
   const [loading, setLoading] = useState(false);
@@ -32,7 +33,7 @@ const SearchPanel = ({ onClose, onFileSelect }: SearchPanelProps) => {
   useEffect(() => {
     const performSearch = async () => {
       if (!debouncedQuery.trim()) {
-        setResults([]);
+        setResults({});
         return;
       }
 
@@ -55,7 +56,7 @@ const SearchPanel = ({ onClose, onFileSelect }: SearchPanelProps) => {
 
   const handleResultClick = (filePath: string) => {
     onFileSelect(filePath);
-    onClose();
+    if (onClose) onClose();
   };
 
   const highlightText = (text: string, query: string) => {
@@ -65,7 +66,7 @@ const SearchPanel = ({ onClose, onFileSelect }: SearchPanelProps) => {
   };
 
   return (
-    <div className="fixed top-[3%] left-[51px] right-0 bottom-0 bg-theme-black z-[1000] flex flex-col">
+    <div className={`${embedded ? 'w-full h-full' : 'fixed top-[3%] left-[51px] right-0 bottom-0'} bg-theme-black ${embedded ? '' : 'z-[1000]'} flex flex-col`}>
       {/* 搜索栏头部 */}
       <div className="h-[60px] bg-theme-black border-b border-theme-gray3 flex items-center px-4 gap-3">
         <FontAwesomeIcon icon={faSearch} className="text-theme-green text-lg" />
@@ -77,13 +78,15 @@ const SearchPanel = ({ onClose, onFileSelect }: SearchPanelProps) => {
           className="flex-1 bg-transparent border-none outline-none text-theme-white text-lg placeholder-theme-gray4"
           autoFocus
         />
-        <button
-          onClick={onClose}
-          className="p-2 hover:bg-theme-gray3 rounded transition-colors"
-          title="关闭"
-        >
-          <FontAwesomeIcon icon={faTimes} className="text-theme-white" />
-        </button>
+        {onClose && (
+          <button
+            onClick={onClose}
+            className="p-2 hover:bg-theme-gray3 rounded transition-colors"
+            title="关闭"
+          >
+            <FontAwesomeIcon icon={faTimes} className="text-theme-white" />
+          </button>
+        )}
       </div>
 
       {/* 搜索结果列表 */}
