@@ -2,7 +2,7 @@ app:
   name: "青烛"
 
 python:
-  require_3_13_9: true
+  require_3_12: true
 
 git:
   remote_url: "https://gitee.com/flickeringlamp/qingzhu.git"

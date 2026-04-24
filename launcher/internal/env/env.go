@@ -87,9 +87,9 @@ func EnsurePython(baseDir string, logger Logger) (string, error) {
 	// 2. 弹出安装向导
 	logger.Logf("正在启动 Python 安装向导: %s", filepath.Base(installerPath))
 	cmd := exec.Command(installerPath,
-		"InstallAllUsers=0",
+		"InstallAllUsers=1",
 		fmt.Sprintf("TargetDir=%s", pythonDir),
-		"PrependPath=0",
+		"PrependPath=1",
 		"AssociateFiles=0",
 	)
 	err = cmd.Run()
@@ -267,7 +267,7 @@ type PythonVersionCheck struct {
 	Message string `json:"message"`
 }
 
-// CheckSystemPython 检测系统 Python 版本是否 >= 3.13.9
+// CheckSystemPython 检测系统 Python 版本是否 >= 3.12.0
 func CheckSystemPython() PythonVersionCheck {
 	// 1. 检测 python.exe
 	pyPath, err := exec.LookPath("python")
@@ -278,7 +278,7 @@ func CheckSystemPython() PythonVersionCheck {
 				Found:   false,
 				Version: "",
 				Ok:      false,
-				Message: "未检测到系统 Python，请先安装 Python 3.13.9",
+				Message: "未检测到系统 Python，请先安装 Python 3.12 或更高版本",
 			}
 		}
 	}
@@ -306,11 +306,11 @@ func CheckSystemPython() PythonVersionCheck {
 		}
 	}
 
-	// 3. 比较版本是否 >= 3.13.9
-	ok := !versionLessThan(version, "3.13.9")
+	// 3. 比较版本是否 >= 3.12.0
+	ok := !versionLessThan(version, "3.12.0")
 	msg := fmt.Sprintf("当前 Python 版本: %s", version)
 	if !ok {
-		msg = fmt.Sprintf("当前 Python 版本 %s 过低，建议安装 3.13.9 以避免兼容性问题", version)
+		msg = fmt.Sprintf("当前 Python 版本 %s 过低，建议安装 3.12 或更高版本以避免兼容性问题", version)
 	}
 
 	return PythonVersionCheck{

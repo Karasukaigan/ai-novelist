@@ -52,7 +52,7 @@ export function getBackendPath() {
   if (isDev) {
     // 开发环境：优先使用项目 venv，回退到系统 Python
     const projectRoot = path.join(__dirname, '../../..');
-    const venvPython = path.join(projectRoot, 'venv', 'Scripts', 'python.exe');
+    const venvPython = path.join(projectRoot, '.venv', 'Scripts', 'python.exe');
     const hasVenv = fs.existsSync(venvPython);
     return {
       type: 'python',

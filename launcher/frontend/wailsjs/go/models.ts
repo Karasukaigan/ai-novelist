@@ -89,7 +89,7 @@ export namespace updater {
 	export class Config {
 	    // Go type: struct { Name string "yaml:\"name\"" }
 	    App: any;
-	    // Go type: struct { Require3_13_9 bool "yaml:\"require_3_13_9\"" }
+	    // Go type: struct { Require3_12 bool "yaml:\"require_3_12\"" }
 	    Python: any;
 	    // Go type: struct { RemoteURL string "yaml:\"remote_url\""; ProjectDir string "yaml:\"project_dir\"" }
 	    Git: any;

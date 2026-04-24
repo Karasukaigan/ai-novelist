@@ -26,7 +26,7 @@ type Config struct {
 		Name string `yaml:"name"`
 	} `yaml:"app"`
 	Python struct {
-		Require3_13_9 bool `yaml:"require_3_13_9"`
+		Require3_12 bool `yaml:"require_3_12"`
 	} `yaml:"python"`
 	Git struct {
 		RemoteURL  string `yaml:"remote_url"`

@@ -73,8 +73,8 @@ function App() {
 
   useEffect(() => {
     LoadConfig().then((cfg) => {
-      // 检测是否需要检查 Python 3.13.9
-      if (cfg?.Python?.require_3_13_9) {
+      // 检测是否需要检查 Python 3.12
+      if (cfg?.Python?.require_3_12) {
         CheckPythonVersion().then((check) => {
           setPythonCheck(check);
           if (!check.ok) {
