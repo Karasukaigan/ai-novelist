@@ -6,29 +6,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
+
+	"launcher/internal/updater"
 )
 
 type Logger interface {
 	Logf(format string, args ...interface{})
 }
 
-func NpmInstall(projectPath, nodePath, mirrorURL string, logger Logger) error {
-	frontendPath := filepath.Join(projectPath, "frontend")
-	nodeModules := filepath.Join(frontendPath, "node_modules")
-
-	if _, err := os.Stat(nodeModules); err == nil {
-		logger.Logf("前端依赖已存在")
-		return nil
+// makeNodeEnv 构造包含便携 Node.js PATH 的环境变量
+func makeNodeEnv(nodePath string) []string {
+	nodeDir := filepath.Dir(nodePath)
+	env := os.Environ()
+	for i, e := range env {
+		if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
+			env[i] = "PATH=" + nodeDir + ";" + e[len("PATH="):]
+			break
+		}
 	}
+	return env
+}
+
+func NpmInstall(projectPath, nodePath string, logger Logger) error {
+	frontendPath := filepath.Join(projectPath, "frontend")
 
 	logger.Logf("正在安装前端依赖（可能需要几分钟）...")
 
 	npmPath := resolveNpm(nodePath)
 	cmd := exec.Command(npmPath, "install")
 	cmd.Dir = frontendPath
-	if mirrorURL != "" {
-		cmd.Env = append(os.Environ(), "npm_config_registry="+mirrorURL)
-	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.Env = append(makeNodeEnv(nodePath),
+		"npm_config_registry="+updater.NpmMirror,
+		"ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/",
+		"ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/",
+	)
 
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -65,6 +79,8 @@ func Start(projectPath, nodePath string, logger Logger) (*exec.Cmd, error) {
 	npmPath := resolveNpm(nodePath)
 	cmd := exec.Command("cmd", "/c", npmPath, "run", "electron-dev")
 	cmd.Dir = frontendPath
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	cmd.Env = makeNodeEnv(nodePath)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

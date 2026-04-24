@@ -3,6 +3,11 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $launcherDir = Join-Path $projectRoot "launcher"
+$embeddedDir = Join-Path $launcherDir "internal\env\embedded"
+
+Write-Host "Copying rg.exe to embedded directory..."
+New-Item -ItemType Directory -Path $embeddedDir -Force | Out-Null
+Copy-Item (Join-Path $projectRoot "bin\rg.exe") (Join-Path $embeddedDir "rg.exe") -Force
 
 Write-Host "Building launcher..."
 
@@ -20,7 +25,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$src = Join-Path $launcherDir "build" "qingzhu-launcher.exe"
+$src = Join-Path (Join-Path $launcherDir "build") "qingzhu-launcher.exe"
 $dst = Join-Path $projectRoot "qingzhu-launcher.exe"
 
 if (Test-Path $src) {

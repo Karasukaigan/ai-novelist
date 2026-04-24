@@ -34,15 +34,14 @@ def convert_to_langchain_config(mcp_servers: dict) -> dict:
                   
                 # 处理 uvx 命令
                 if command == "uvx":
-                    # 使用项目自带的 uvx
-                    command = settings.UVX_EXECUTABLE
+                    # uv 已作为 pip 依赖安装，uvx 在 Python 环境的 Scripts 目录下可用
                     # 添加阿里镜像源参数（Python 包镜像）
                     args = ["--index-url", "https://mirrors.aliyun.com/pypi/simple/"] + args
                     logger.info(f"使用 uvx 命令 (阿里镜像源): {command} {' '.join(args)}")
                 elif command == "npx":
                     # 使用项目自带的 node.exe 执行 npx-cli.js
                     node_exe = Path(settings.NODE_EXECUTABLE)
-                    npx_cli_js = node_exe.parent / "npm" / "package" / "bin" / "npx-cli.js"
+                    npx_cli_js = node_exe.parent / "node_modules" / "npm" / "bin" / "npx-cli.js"
                     
                     # 如果项目自带的 node.exe 和 npx-cli.js 都存在
                     if node_exe.exists() and npx_cli_js.exists():

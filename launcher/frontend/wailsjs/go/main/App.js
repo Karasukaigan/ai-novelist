@@ -6,16 +6,20 @@ export function AutoCheckUpdate() {
   return window['go']['main']['App']['AutoCheckUpdate']();
 }
 
+export function CheckPythonVersion() {
+  return window['go']['main']['App']['CheckPythonVersion']();
+}
+
 export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
 }
 
-export function GetLogs() {
-  return window['go']['main']['App']['GetLogs']();
+export function GetGitServerAddress() {
+  return window['go']['main']['App']['GetGitServerAddress']();
 }
 
-export function GetMirror() {
-  return window['go']['main']['App']['GetMirror']();
+export function GetLogs() {
+  return window['go']['main']['App']['GetLogs']();
 }
 
 export function GetVersion() {
@@ -34,6 +38,10 @@ export function GitCreateBranch(arg1) {
   return window['go']['main']['App']['GitCreateBranch'](arg1);
 }
 
+export function GitFullGraph(arg1) {
+  return window['go']['main']['App']['GitFullGraph'](arg1);
+}
+
 export function GitHistory(arg1) {
   return window['go']['main']['App']['GitHistory'](arg1);
 }
@@ -44,6 +52,10 @@ export function GitSwitchBranch(arg1) {
 
 export function IsMainProgramRunning() {
   return window['go']['main']['App']['IsMainProgramRunning']();
+}
+
+export function IsProjectDeployed() {
+  return window['go']['main']['App']['IsProjectDeployed']();
 }
 
 export function KillMainProgram() {
@@ -62,6 +74,10 @@ export function Logf(arg1, arg2) {
   return window['go']['main']['App']['Logf'](arg1, arg2);
 }
 
+export function OpenWebviewTab(arg1, arg2) {
+  return window['go']['main']['App']['OpenWebviewTab'](arg1, arg2);
+}
+
 export function PerformUpdate() {
   return window['go']['main']['App']['PerformUpdate']();
 }
@@ -70,6 +86,10 @@ export function Progress(arg1) {
   return window['go']['main']['App']['Progress'](arg1);
 }
 
-export function SetMirror(arg1) {
-  return window['go']['main']['App']['SetMirror'](arg1);
+export function StartGitServer() {
+  return window['go']['main']['App']['StartGitServer']();
+}
+
+export function StopGitServer() {
+  return window['go']['main']['App']['StopGitServer']();
 }

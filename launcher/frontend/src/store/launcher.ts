@@ -1,30 +1,38 @@
 import { createSlice, type Draft, type PayloadAction } from '@reduxjs/toolkit';
 import type { updater } from '../../wailsjs/go/models';
 
+export interface WebviewTab {
+  id: string;
+  title: string;
+  url: string;
+}
+
 export interface LauncherState {
   logs: string[];
   version: string;
   updateStatus: updater.UpdateStatus | null;
+  checkingUpdate: boolean;
   updating: boolean;
   progress: number;
   copied: boolean;
   mainRunning: boolean;
   launching: boolean;
   launchPhase: string;
-  mirror: string;
+  webviewTabs: WebviewTab[];
 }
 
 const initialState: LauncherState = {
   logs: [],
   version: '',
   updateStatus: null,
+  checkingUpdate: false,
   updating: false,
   progress: 0,
   copied: false,
   mainRunning: false,
   launching: false,
   launchPhase: '',
-  mirror: 'tsinghua',
+  webviewTabs: [],
 };
 
 export const launcherSlice = createSlice({
@@ -42,6 +50,9 @@ export const launcherSlice = createSlice({
     },
     setUpdateStatus: (state: Draft<LauncherState>, action: PayloadAction<updater.UpdateStatus | null>) => {
       state.updateStatus = action.payload;
+    },
+    setCheckingUpdate: (state: Draft<LauncherState>, action: PayloadAction<boolean>) => {
+      state.checkingUpdate = action.payload;
     },
     setUpdating: (state: Draft<LauncherState>, action: PayloadAction<boolean>) => {
       state.updating = action.payload;
@@ -61,11 +72,17 @@ export const launcherSlice = createSlice({
     setLaunchPhase: (state: Draft<LauncherState>, action: PayloadAction<string>) => {
       state.launchPhase = action.payload;
     },
-    setMirror: (state: Draft<LauncherState>, action: PayloadAction<string>) => {
-      state.mirror = action.payload;
-    },
     resetProgress: (state: Draft<LauncherState>) => {
       state.progress = 0;
+    },
+    addWebviewTab: (state: Draft<LauncherState>, action: PayloadAction<WebviewTab>) => {
+      const exists = state.webviewTabs.find((t) => t.id === action.payload.id);
+      if (!exists) {
+        state.webviewTabs.push(action.payload);
+      }
+    },
+    removeWebviewTab: (state: Draft<LauncherState>, action: PayloadAction<string>) => {
+      state.webviewTabs = state.webviewTabs.filter((t) => t.id !== action.payload);
     },
   },
 });
@@ -75,14 +92,16 @@ export const {
   setLogs,
   setVersion,
   setUpdateStatus,
+  setCheckingUpdate,
   setUpdating,
   setProgress,
   setCopied,
   setMainRunning,
   setLaunching,
   setLaunchPhase,
-  setMirror,
   resetProgress,
+  addWebviewTab,
+  removeWebviewTab,
 } = launcherSlice.actions;
 
 export default launcherSlice.reducer;

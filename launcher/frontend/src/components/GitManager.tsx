@@ -10,6 +10,7 @@ import {
 } from '../store/git';
 import {
   GitHistory,
+  GitFullGraph,
   GitBranches,
   GitCheckout,
   GitSwitchBranch,
@@ -23,6 +24,7 @@ interface CommitDetail {
   author: string;
   parents: string[];
   is_head: boolean;
+  refs?: string[];
 }
 
 interface BranchInfo {
@@ -44,6 +46,8 @@ export default function GitManager() {
   } = useSelector((state: RootState) => state.gitSlice);
 
   const [activeTab, setActiveTab] = useState<'commits' | 'graph'>('commits');
+  const [graphCommits, setGraphCommits] = useState<CommitDetail[]>([]);
+  const [graphLoading, setGraphLoading] = useState(false);
 
   const refresh = useCallback(async () => {
     dispatch(setGitLoading(true));
@@ -64,6 +68,21 @@ export default function GitManager() {
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (activeTab !== 'graph') return;
+    setGraphLoading(true);
+    console.log('[GitManager] 开始加载分支图数据...');
+    GitFullGraph(200)
+      .then((data) => {
+        console.log('[GitManager] 分支图数据:', data);
+        setGraphCommits(data || []);
+      })
+      .catch((err) => {
+        console.error('[GitManager] 加载分支图失败:', err);
+      })
+      .finally(() => setGraphLoading(false));
+  }, [activeTab]);
 
   const handleCheckout = async () => {
     if (!selectedCommit) return;
@@ -158,7 +177,11 @@ export default function GitManager() {
           </div>
         ) : (
           <div className="git-graph-panel">
-            <GitGraphView commits={commits} branchName={currentBranch || 'main'} />
+            {graphLoading ? (
+              <div className="git-empty">加载分支图中...</div>
+            ) : (
+              <GitGraphView commits={graphCommits} />
+            )}
           </div>
         )}
       </div>
@@ -184,28 +207,61 @@ export default function GitManager() {
 }
 
 // 使用 @gitgraph/react 渲染分支图
-function GitGraphView({ commits, branchName }: { commits: CommitDetail[]; branchName: string }) {
+function GitGraphView({ commits }: { commits: CommitDetail[] }) {
   if (commits.length === 0) {
     return <div className="git-empty">暂无数据</div>;
   }
 
-  const reversed = [...commits].reverse();
+  // @gitgraph/core 的 import 格式：需要 git2json 格式
+  // 参考：https://github.com/nicoespeon/gitgraph.js/blob/master/packages/gitgraph-core/src/user-api/gitgraph-user-api.ts
+  // author 必须是 object { name, email } 类型
+  const data = [...commits].reverse().map((c) => ({
+    hash: c.sha,
+    parents: c.parents || [],
+    subject: c.message.split('\n')[0],
+    author: {
+      name: c.author || 'Unknown',
+      email: ''
+    },
+    authorDate: c.date,
+    refs: c.refs || [],
+  }));
 
-  return (
-    <Gitgraph options={{ template: TemplateName.Metro }}>
-      {(gitgraph: any) => {
-        const main = gitgraph.branch(branchName);
-        reversed.forEach((c) => {
-          main.commit({
-            subject: c.message.split('\n')[0],
-            hash: c.sha.slice(0, 7),
-            author: c.author,
-          });
-        });
-        return null;
-      }}
-    </Gitgraph>
-  );
+  // 调试日志
+  console.log('[GitGraphView] 渲染数据:', data);
+
+  try {
+    return (
+      <Gitgraph options={{
+        template: TemplateName.Metro,
+        orientation: 'vertical-reverse'
+      }}>
+        {(gitgraph: any) => {
+          try {
+            if (gitgraph && typeof gitgraph.import === 'function') {
+              gitgraph.import(data);
+              console.log('[GitGraphView] import 成功');
+            } else {
+              console.error('[GitGraphView] gitgraph 对象无效或缺少 import 方法:', gitgraph);
+            }
+          } catch (err) {
+            console.error('[GitGraphView] import 失败:', err);
+          }
+          return null;
+        }}
+      </Gitgraph>
+    );
+  } catch (err) {
+    console.error('[GitGraphView] 渲染失败:', err);
+    return (
+      <div className="git-empty" style={{ color: 'red' }}>
+        分支图渲染失败，请查看控制台错误日志
+        <pre style={{ fontSize: '10px', marginTop: '10px' }}>
+          {err instanceof Error ? err.message : String(err)}
+        </pre>
+      </div>
+    );
+  }
 }
 
 function formatDate(iso: string): string {

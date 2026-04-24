@@ -488,12 +488,119 @@ html, body, #root {
 
 .git-graph-panel {
   height: 100%;
-  overflow-y: auto;
+  min-height: 400px;
+  overflow: auto;
   padding: 10px;
-  background: var(--color-gray1);
+  background: #fff;
   border-radius: 8px;
 }
 
+/* Gitgraph 容器需要明确高度 */
+.git-graph-panel > div {
+  min-height: 600px;
+}
+
 .git-graph-panel svg {
-  background: transparent !important;
+  background: #fff !important;
+  border-radius: 4px;
+  min-height: 600px;
+}
+
+/* Gitgraph 渲染样式 - 使用更具体的选择器 */
+.git-graph-panel svg text,
+.git-graph-panel svg .gitgraph-label,
+.git-graph-panel svg .gitgraph-tag,
+.git-graph-panel svg .gitgraph-branch-label {
+  fill: #333 !important;
+  color: #333 !important;
+}
+
+.git-graph-panel svg circle {
+  stroke: #333 !important;
+  fill: #fff !important;
+  stroke-width: 2px;
+}
+
+.git-graph-panel svg path {
+  stroke: #666 !important;
+  stroke-width: 2px;
+}
+
+/* Gitgraph 分支颜色 */
+.git-graph-panel svg [class*="branch"] {
+  fill: #333 !important;
+  stroke: #333 !important;
+}
+
+/* ===== Python 版本提示 ===== */
+.python-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.python-alert-msg {
+  flex: 1;
+}
+
+/* ===== Webview 标签页 ===== */
+.webview-tabs-panel {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.webview-tab {
+  flex: 1;
+  min-width: 320px;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-gray2);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-gray1);
+}
+
+.webview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--color-gray2);
+  border-bottom: 1px solid var(--color-gray2);
+}
+
+.webview-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-white);
+}
+
+.webview-close {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--color-gray4);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.webview-close:hover {
+  color: var(--color-red);
+}
+
+.webview-frame {
+  flex: 1;
+  border: none;
+  width: 100%;
+  background: var(--color-white);
 }

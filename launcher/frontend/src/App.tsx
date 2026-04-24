@@ -8,27 +8,36 @@ import {
   setMainRunning,
   setProgress,
   setUpdateStatus,
+  setCheckingUpdate,
   setUpdating,
   setVersion,
   setLaunching,
   setLaunchPhase,
-  setMirror,
   resetProgress,
+  addWebviewTab,
 } from './store/launcher';
 import { useTheme } from './context/ThemeContext';
 import {
+  CheckPythonVersion,
   CheckUpdate,
   GetLogs,
-  GetMirror,
   GetVersion,
   IsMainProgramRunning,
+  IsProjectDeployed,
   LaunchMainProgram,
   LoadConfig,
   PerformUpdate,
-  SetMirror,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime';
 import GitManager from './components/GitManager';
+import WebviewTab from './components/WebviewTab';
+
+interface PythonVersionCheck {
+  found: boolean;
+  version: string;
+  ok: boolean;
+  message: string;
+}
 
 function App() {
   const dispatch = useDispatch();
@@ -36,23 +45,25 @@ function App() {
     logs,
     version,
     updateStatus,
+    checkingUpdate,
     updating,
     progress,
     copied,
     mainRunning,
     launching,
     launchPhase,
-    mirror,
+    webviewTabs,
   } = useSelector((state: RootState) => state.launcherSlice);
 
   const { theme } = useTheme();
   const logRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<'launcher' | 'git'>('launcher');
+  const [deployed, setDeployed] = useState<boolean>(false);
+  const [pythonCheck, setPythonCheck] = useState<PythonVersionCheck | null>(null);
+  const [showPythonAlert, setShowPythonAlert] = useState(false);
 
   const refreshStatus = async () => {
     try {
-      const status = await CheckUpdate();
-      dispatch(setUpdateStatus(status));
       const v = await GetVersion();
       dispatch(setVersion(v));
     } catch {
@@ -61,10 +72,21 @@ function App() {
   };
 
   useEffect(() => {
-    LoadConfig().then(() => {
-      refreshStatus();
+    LoadConfig().then((cfg) => {
+      // 检测是否需要检查 Python 3.13.9
+      if (cfg?.Python?.require_3_13_9) {
+        CheckPythonVersion().then((check) => {
+          setPythonCheck(check);
+          if (!check.ok) {
+            setShowPythonAlert(true);
+          }
+        });
+      }
+      IsProjectDeployed().then((d: boolean) => {
+        setDeployed(d);
+        refreshStatus();
+      });
       IsMainProgramRunning().then((running: boolean) => dispatch(setMainRunning(running)));
-      GetMirror().then((m: string) => dispatch(setMirror(m)));
     });
 
     const offLog = EventsOn('log', (data: string) => {
@@ -83,10 +105,19 @@ function App() {
       }
     });
 
+    const offWebview = EventsOn('open-webview-tab', (data: { title: string; url: string }) => {
+      dispatch(addWebviewTab({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        title: data.title,
+        url: data.url,
+      }));
+    });
+
     return () => {
       offLog?.();
       offProgress?.();
       offMainState?.();
+      offWebview?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,12 +128,26 @@ function App() {
     }
   }, [logs]);
 
+  const handleCheckUpdate = async () => {
+    if (checkingUpdate) return;
+    dispatch(setCheckingUpdate(true));
+    try {
+      const status = await CheckUpdate();
+      dispatch(setUpdateStatus(status));
+    } catch {
+      dispatch(setUpdateStatus(null));
+    } finally {
+      dispatch(setCheckingUpdate(false));
+    }
+  };
+
   const handleUpdate = async () => {
-    if (!updateStatus?.has_update) return;
     dispatch(setUpdating(true));
     try {
       await PerformUpdate();
+      setDeployed(true);
       await refreshStatus();
+      dispatch(setUpdateStatus(null));
       dispatch(resetProgress());
     } catch {
       dispatch(resetProgress());
@@ -116,18 +161,11 @@ function App() {
     dispatch(setLaunchPhase('准备启动...'));
     try {
       await LaunchMainProgram();
-    } catch {
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      dispatch(addLog(`启动失败: ${msg}\n`));
       dispatch(setLaunching(false));
       dispatch(setLaunchPhase(''));
-    }
-  };
-
-  const handleSetMirror = async (m: string) => {
-    try {
-      await SetMirror(m);
-      dispatch(setMirror(m));
-    } catch {
-      // ignore
     }
   };
 
@@ -138,10 +176,38 @@ function App() {
     setTimeout(() => dispatch(setCopied(false)), 1500);
   };
 
-  const hasUpdate = updateStatus?.has_update ?? false;
+  const handleOpenInstallGuide = () => {
+    dispatch(addWebviewTab({
+      id: 'python-install-guide',
+      title: 'Python 安装教程',
+      url: 'https://denghuominghui.cn',
+    }));
+  };
+
   const remoteMsg = updateStatus?.remote_commit?.message ?? '';
   const remoteSha = updateStatus?.remote_commit?.sha ?? '';
   const localSha = updateStatus?.local_commit?.sha ?? '';
+
+  const getUpdateButtonText = () => {
+    if (checkingUpdate) return '检查中...';
+    if (updating) return '更新中...';
+    if (!deployed) return '下载项目';
+    if (updateStatus?.has_update) return '下载更新';
+    if (updateStatus !== null) return '当前已是最新更新';
+    return '检查更新';
+  };
+
+  const handleUpdateButtonClick = () => {
+    if (!deployed) {
+      handleUpdate();
+      return;
+    }
+    if (updateStatus?.has_update) {
+      handleUpdate();
+    } else {
+      handleCheckUpdate();
+    }
+  };
 
   return (
     <div className="app" style={{ background: theme.black, color: theme.white }}>
@@ -158,6 +224,7 @@ function App() {
             <button
               className={`tab-btn ${tab === 'git' ? 'active' : ''}`}
               onClick={() => setTab('git')}
+              disabled={!deployed}
             >
               Git管理
             </button>
@@ -171,85 +238,93 @@ function App() {
       <main className="main">
         {tab === 'launcher' ? (
           <>
-
-        <div className="toolbar">
-          <button
-            className="btn warn"
-            onClick={handleUpdate}
-            disabled={!hasUpdate || updating || launching}
-            title={!hasUpdate ? '当前已是最新提交' : ''}
-          >
-            {updating ? '更新中...' : hasUpdate ? '立即更新' : '已是最新提交'}
-          </button>
-          <button
-            className="btn primary"
-            onClick={handleLaunch}
-            disabled={mainRunning || launching}
-            title={mainRunning ? '主程序正在运行中' : ''}
-          >
-            {mainRunning ? '运行中' : launching ? '启动中...' : '启动程序'}
-          </button>
-          <button
-            className={`btn ${copied ? 'success' : ''}`}
-            onClick={handleCopyLogs}
-            disabled={copied}
-          >
-            {copied ? '复制成功' : '复制日志'}
-          </button>
-          <select
-            className="btn"
-            value={mirror}
-            onChange={(e) => handleSetMirror(e.target.value)}
-            title="选择镜像源"
-          >
-            <option value="tsinghua">清华源</option>
-            <option value="aliyun">阿里源</option>
-          </select>
-        </div>
-
-        {launching && (
-          <div className="launch-phase" style={{ color: theme.accent }}>
-            {launchPhase}
-          </div>
-        )}
-
-        {hasUpdate && (
-          <div className="update-info">
-            <div className="commit-row">
-              <span className="commit-label">远程提交:</span>
-              <span className="commit-sha">{remoteSha.slice(0, 7)}</span>
-            </div>
-            <div className="commit-msg">{remoteMsg}</div>
-            {localSha && (
-              <div className="commit-row">
-                <span className="commit-label">本地提交:</span>
-                <span className="commit-sha">{localSha.slice(0, 7)}</span>
+            {showPythonAlert && pythonCheck && (
+              <div className="python-alert" style={{ background: theme.dark, borderColor: theme.warn }}>
+                <span className="python-alert-msg" style={{ color: theme.warn }}>
+                  {pythonCheck.message}
+                </span>
+                <button className="btn warn" onClick={handleOpenInstallGuide}>
+                  查看安装教程
+                </button>
               </div>
             )}
-          </div>
-        )}
 
-        {progress > 0 && progress < 100 && (
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
-            <span className="progress-text">{progress}%</span>
-          </div>
-        )}
-
-        <div className="log-box" ref={logRef}>
-          {logs.length === 0 && (
-            <div className="log-placeholder">等待日志输出...</div>
-          )}
-          {logs.map((line, idx) => (
-            <div key={idx} className="log-line">
-              <span className="log-prefix">{'>'}</span>
-              <span className="log-content">{line.replace(/\n$/, '')}</span>
+            <div className="toolbar">
+              <button
+                className="btn warn"
+                onClick={handleUpdateButtonClick}
+                disabled={checkingUpdate || updating || launching}
+              >
+                {getUpdateButtonText()}
+              </button>
+              <button
+                className="btn primary"
+                onClick={handleLaunch}
+                disabled={mainRunning || launching || !deployed}
+                title={mainRunning ? '主程序正在运行中' : !deployed ? '请先下载项目' : ''}
+              >
+                {mainRunning ? '运行中' : launching ? '启动中...' : '启动程序'}
+              </button>
+              <button
+                className={`btn ${copied ? 'success' : ''}`}
+                onClick={handleCopyLogs}
+                disabled={copied}
+              >
+                {copied ? '复制成功' : '复制日志'}
+              </button>
             </div>
-          ))}
-        </div>
+
+            {launching && (
+              <div className="launch-phase" style={{ color: theme.accent }}>
+                {launchPhase}
+              </div>
+            )}
+
+            {updateStatus !== null && (
+              <div className="update-info">
+                <div className="commit-row">
+                  <span className="commit-label">远程提交:</span>
+                  <span className="commit-sha">{remoteSha.slice(0, 7)}</span>
+                </div>
+                <div className="commit-msg">{remoteMsg}</div>
+                {localSha && (
+                  <div className="commit-row">
+                    <span className="commit-label">本地提交:</span>
+                    <span className="commit-sha">{localSha.slice(0, 7)}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {progress > 0 && progress < 100 && (
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${progress}%` }} />
+                <span className="progress-text">{progress}%</span>
+              </div>
+            )}
+
+            <div className="log-box" ref={logRef}>
+              {logs.length === 0 && (
+                <div className="log-placeholder">等待日志输出...</div>
+              )}
+              {logs.map((line, idx) => (
+                <div key={idx} className="log-line">
+                  <span className="log-prefix">{'>'}</span>
+                  <span className="log-content">{line.replace(/\n$/, '')}</span>
+                </div>
+              ))}
+            </div>
           </>
         ) : (
           <GitManager />
+        )}
+
+        {webviewTabs.length > 0 && (
+          <div className="webview-tabs-panel">
+            {webviewTabs.map((t) => (
+              <WebviewTab key={t.id} id={t.id} title={t.title} url={t.url} />
+            ))}
+          </div>
         )}
       </main>
     </div>

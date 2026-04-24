@@ -1,3 +1,26 @@
+export namespace env {
+	
+	export class PythonVersionCheck {
+	    found: boolean;
+	    version: string;
+	    ok: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new PythonVersionCheck(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.found = source["found"];
+	        this.version = source["version"];
+	        this.ok = source["ok"];
+	        this.message = source["message"];
+	    }
+	}
+
+}
+
 export namespace gitman {
 	
 	export class BranchInfo {
@@ -25,6 +48,7 @@ export namespace gitman {
 	    author: string;
 	    parents: string[];
 	    is_head: boolean;
+	    refs: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new CommitDetail(source);
@@ -38,6 +62,7 @@ export namespace gitman {
 	        this.author = source["author"];
 	        this.parents = source["parents"];
 	        this.is_head = source["is_head"];
+	        this.refs = source["refs"];
 	    }
 	}
 
@@ -62,11 +87,12 @@ export namespace updater {
 	    }
 	}
 	export class Config {
-	    // Go type: struct { Name string "yaml:\"name\""; MainExecutable string "yaml:\"main_executable\"" }
+	    // Go type: struct { Name string "yaml:\"name\"" }
 	    App: any;
-	    // Go type: struct { RemoteURL string "yaml:\"remote_url\""; ProjectDir string "yaml:\"project_dir\""; Branch string "yaml:\"branch\"" }
+	    // Go type: struct { Require3_13_9 bool "yaml:\"require_3_13_9\"" }
+	    Python: any;
+	    // Go type: struct { RemoteURL string "yaml:\"remote_url\""; ProjectDir string "yaml:\"project_dir\"" }
 	    Git: any;
-	    Mirror: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -75,8 +101,8 @@ export namespace updater {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.App = this.convertValues(source["App"], Object);
+	        this.Python = this.convertValues(source["Python"], Object);
 	        this.Git = this.convertValues(source["Git"], Object);
-	        this.Mirror = source["Mirror"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

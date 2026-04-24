@@ -9,7 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"launcher/internal/env"
 	"launcher/internal/gitman"
+	"launcher/internal/gitservice"
 	"launcher/internal/launcher"
 	"launcher/internal/updater"
 
@@ -18,11 +20,12 @@ import (
 
 type App struct {
 	ctx         context.Context
-	config      *updater.Config // 这里的星号表示，config不是一个完整的Config对象，而是指向Config的内存地址
+	config      *updater.Config
 	logBuffer   []string
 	logMutex    sync.RWMutex
 	cmdFrontend *os.Process
 	cmdMutex    sync.Mutex
+	gitServer   *gitservice.Server
 }
 
 func NewApp() *App {
@@ -31,6 +34,53 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.Logf("[DEBUG] App startup 被调用")
+}
+
+// StartGitServer 启动Git HTTP服务
+func (a *App) StartGitServer() error {
+	if a.gitServer != nil {
+		return nil
+	}
+
+	projectDir := a.getProjectDir()
+	if projectDir == "" {
+		return fmt.Errorf("项目目录未设置")
+	}
+
+	a.gitServer = gitservice.NewServer("")
+	a.gitServer.SetProjectDir(projectDir)
+
+	if err := a.gitServer.Start(); err != nil {
+		a.gitServer = nil
+		return fmt.Errorf("启动Git服务失败: %w", err)
+	}
+
+	a.Logf("Git服务已启动: %s", a.gitServer.GetAddress())
+	return nil
+}
+
+// StopGitServer 停止Git HTTP服务
+func (a *App) StopGitServer() error {
+	if a.gitServer == nil {
+		return nil
+	}
+
+	if err := a.gitServer.Stop(); err != nil {
+		return fmt.Errorf("停止Git服务失败: %w", err)
+	}
+
+	a.gitServer = nil
+	a.Logf("Git服务已停止")
+	return nil
+}
+
+// GetGitServerAddress 获取Git服务地址
+func (a *App) GetGitServerAddress() string {
+	if a.gitServer == nil {
+		return ""
+	}
+	return a.gitServer.GetAddress()
 }
 
 func (a *App) LoadConfig() (*updater.Config, error) {
@@ -42,12 +92,30 @@ func (a *App) LoadConfig() (*updater.Config, error) {
 	return config, nil
 }
 
+// getProjectDir 获取项目目录（exe同级/qingzhu/）
+func (a *App) getProjectDir() string {
+	if a.config == nil {
+		return ""
+	}
+	return updater.GetProjectDir(a.config)
+}
+
+// IsProjectDeployed 检查项目仓库是否存在（通过 .git 目录判断）
+func (a *App) IsProjectDeployed() bool {
+	projectDir := a.getProjectDir()
+	if projectDir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(projectDir, ".git"))
+	return err == nil
+}
+
 func (a *App) GetVersion() string {
 	if a.config == nil {
 		return ""
 	}
-	projectPath := a.getProjectPath()
-	local, err := updater.GetLocalCommit(projectPath)
+	projectDir := a.getProjectDir()
+	local, err := updater.GetLocalCommit(projectDir)
 	if err != nil {
 		return "未安装"
 	}
@@ -61,22 +129,14 @@ func (a *App) CheckUpdate() (*updater.UpdateStatus, error) {
 	if a.config == nil {
 		return nil, fmt.Errorf("配置未加载")
 	}
-	return updater.CheckUpdateStatus(a.config)
+	return updater.CheckUpdateStatus(a.config, a)
 }
 
 func (a *App) PerformUpdate() error {
 	if a.config == nil {
 		return fmt.Errorf("配置未加载")
 	}
-	return updater.CloneOrPull(a.config, a)
-}
-
-func (a *App) getProjectPath() string {
-	exePath, err := os.Executable()
-	if err != nil {
-		return filepath.Join(".", a.config.Git.ProjectDir)
-	}
-	return filepath.Join(filepath.Dir(exePath), a.config.Git.ProjectDir)
+	return updater.PullUpdates(a.config, a)
 }
 
 func (a *App) LaunchMainProgram() error {
@@ -90,12 +150,10 @@ func (a *App) LaunchMainProgram() error {
 		return fmt.Errorf("主程序已在运行中")
 	}
 
-	projectPath := a.getProjectPath()
-	pipMirror := updater.PipMirrors[a.config.Mirror]
-	npmMirror := updater.NpmMirrors[a.config.Mirror]
+	projectDir := a.getProjectDir()
 
 	go func() {
-		result, err := launcher.LaunchAll(projectPath, pipMirror, npmMirror, a)
+		result, err := launcher.LaunchAll(projectDir, a)
 		if err != nil {
 			a.Logf("启动失败: %v", err)
 			a.emitMainProgramState(false)
@@ -139,6 +197,13 @@ func (a *App) KillMainProgram() error {
 		a.cmdFrontend.Kill()
 		a.cmdFrontend = nil
 	}
+
+	// 停止Git服务
+	if a.gitServer != nil {
+		a.gitServer.Stop()
+		a.gitServer = nil
+	}
+
 	return nil
 }
 
@@ -177,8 +242,9 @@ func (a *App) AutoCheckUpdate() {
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		a.Logf("=== %s 启动器 ===", a.config.App.Name)
+		a.Logf("[DEBUG] AutoCheckUpdate: 开始检查更新")
 
-		status, err := updater.CheckUpdateStatus(a.config)
+		status, err := updater.CheckUpdateStatus(a.config, a)
 		if err != nil {
 			a.Logf("检查更新失败: %v", err)
 			return
@@ -200,44 +266,46 @@ func (a *App) AutoCheckUpdate() {
 }
 
 func (a *App) GitHistory(limit int) ([]gitman.CommitDetail, error) {
-	projectPath := a.getProjectPath()
-	return gitman.GetCommitHistory(projectPath, limit)
+	projectDir := a.getProjectDir()
+	return gitman.GetCommitHistory(projectDir, limit)
+}
+
+func (a *App) GitFullGraph(limit int) ([]gitman.CommitDetail, error) {
+	projectDir := a.getProjectDir()
+	return gitman.GetFullCommitGraph(projectDir, limit)
 }
 
 func (a *App) GitBranches() ([]gitman.BranchInfo, error) {
-	projectPath := a.getProjectPath()
-	return gitman.GetBranches(projectPath)
+	projectDir := a.getProjectDir()
+	return gitman.GetBranches(projectDir)
 }
 
 func (a *App) GitCheckout(hash string) error {
-	projectPath := a.getProjectPath()
-	return gitman.CheckoutCommit(projectPath, hash)
+	projectDir := a.getProjectDir()
+	return gitman.CheckoutCommit(projectDir, hash)
 }
 
 func (a *App) GitSwitchBranch(name string) error {
-	projectPath := a.getProjectPath()
-	return gitman.SwitchBranch(projectPath, name)
+	projectDir := a.getProjectDir()
+	return gitman.SwitchBranch(projectDir, name)
 }
 
 func (a *App) GitCreateBranch(name string) error {
-	projectPath := a.getProjectPath()
-	return gitman.CreateBranch(projectPath, name)
+	projectDir := a.getProjectDir()
+	return gitman.CreateBranch(projectDir, name)
 }
 
-func (a *App) SetMirror(mirror string) error {
-	if a.config == nil {
-		return fmt.Errorf("配置未加载")
-	}
-	if _, ok := updater.PipMirrors[mirror]; !ok {
-		return fmt.Errorf("不支持的镜像源: %s", mirror)
-	}
-	a.config.Mirror = mirror
-	return updater.SaveConfig(a.config)
+// CheckPythonVersion 检测系统 Python 版本，返回检测结果
+func (a *App) CheckPythonVersion() env.PythonVersionCheck {
+	return env.CheckSystemPython()
 }
 
-func (a *App) GetMirror() string {
-	if a.config == nil {
-		return "tsinghua"
+// OpenWebviewTab 打开一个 Webview 标签页，显示指定 URL
+func (a *App) OpenWebviewTab(title string, url string) {
+	if a.ctx != nil {
+		runtime.EventsEmit(a.ctx, "open-webview-tab", map[string]string{
+			"title": title,
+			"url":   url,
+		})
 	}
-	return a.config.Mirror
 }

@@ -2,11 +2,13 @@ package gitman
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/go-git/go-git/v6/plumbing/object"
 )
 
 // CommitDetail 单条提交详情
@@ -17,6 +19,7 @@ type CommitDetail struct {
 	Author  string   `json:"author"`
 	Parents []string `json:"parents"`
 	IsHEAD  bool     `json:"is_head"`
+	Refs    []string `json:"refs"`
 }
 
 // BranchInfo 分支信息
@@ -229,4 +232,109 @@ func CreateBranch(projectDir string, name string) error {
 	}
 
 	return nil
+}
+
+// GetFullCommitGraph 获取全仓库的提交图（包含所有分支可达的 commit）
+func GetFullCommitGraph(projectDir string, limit int) ([]CommitDetail, error) {
+	repo, err := git.PlainOpen(projectDir)
+	if err != nil {
+		return nil, fmt.Errorf("打开仓库失败: %w", err)
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		return nil, fmt.Errorf("获取 HEAD 失败: %w", err)
+	}
+
+	// 收集所有分支引用
+	refsMap := make(map[string][]string) // hash -> [refName, ...]
+
+	// HEAD
+	refsMap[head.Hash().String()] = append(refsMap[head.Hash().String()], "HEAD")
+
+	// 本地分支
+	bIter, err := repo.Branches()
+	if err != nil {
+		return nil, err
+	}
+	defer bIter.Close()
+	for {
+		ref, err := bIter.Next()
+		if err != nil {
+			break
+		}
+		refsMap[ref.Hash().String()] = append(refsMap[ref.Hash().String()], ref.Name().Short())
+	}
+
+	// 远程分支
+	rIter, err := repo.References()
+	if err != nil {
+		return nil, err
+	}
+	defer rIter.Close()
+	for {
+		ref, err := rIter.Next()
+		if err != nil {
+			break
+		}
+		if ref.Type() == plumbing.HashReference && ref.Name().IsRemote() {
+			refsMap[ref.Hash().String()] = append(refsMap[ref.Hash().String()], ref.Name().Short())
+		}
+	}
+
+	// BFS 遍历所有分支可达的 commit
+	seen := make(map[string]bool)
+	var queue []plumbing.Hash
+
+	// 将所有分支 tip 加入队列
+	for h := range refsMap {
+		queue = append(queue, plumbing.NewHash(h))
+	}
+
+	var rawCommits []*object.Commit
+
+	for len(queue) > 0 && len(rawCommits) < limit {
+		cur := queue[0]
+		queue = queue[1:]
+
+		if seen[cur.String()] {
+			continue
+		}
+		seen[cur.String()] = true
+
+		c, err := repo.CommitObject(cur)
+		if err != nil {
+			continue
+		}
+		rawCommits = append(rawCommits, c)
+
+		for _, p := range c.ParentHashes {
+			queue = append(queue, p)
+		}
+	}
+
+	// 按时间从新到旧排序（与 git log 一致）
+	sort.Slice(rawCommits, func(i, j int) bool {
+		return rawCommits[i].Committer.When.After(rawCommits[j].Committer.When)
+	})
+
+	var commits []CommitDetail
+	for _, c := range rawCommits {
+		parents := make([]string, len(c.ParentHashes))
+		for j, h := range c.ParentHashes {
+			parents[j] = h.String()
+		}
+
+		commits = append(commits, CommitDetail{
+			SHA:     c.Hash.String(),
+			Message: c.Message,
+			Date:    c.Committer.When.Format(time.RFC3339),
+			Author:  c.Author.Name,
+			Parents: parents,
+			IsHEAD:  c.Hash == head.Hash(),
+			Refs:    refsMap[c.Hash.String()],
+		})
+	}
+
+	return commits, nil
 }

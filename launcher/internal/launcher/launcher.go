@@ -10,6 +10,7 @@ import (
 	"launcher/internal/env"
 	"launcher/internal/frontend"
 	"launcher/internal/migration"
+	"launcher/internal/updater"
 )
 
 type Logger interface {
@@ -22,72 +23,91 @@ type LaunchResult struct {
 	FrontendCmd *exec.Cmd
 }
 
-// LaunchAll 完成环境准备并启动前端（Electron 自管后端）
-func LaunchAll(projectPath, pipMirror, npmMirror string, logger Logger) (*LaunchResult, error) {
+// getEnvPaths 返回项目所需的 Python 和 Node.js 路径
+func getEnvPaths(projectPath string, logger Logger) (pythonPath, nodePath string, err error) {
 	if !filepath.IsAbs(projectPath) {
 		absPath, err := filepath.Abs(projectPath)
 		if err != nil {
-			return nil, fmt.Errorf("无法解析项目路径: %w", err)
+			return "", "", fmt.Errorf("无法解析项目路径: %w", err)
 		}
 		projectPath = absPath
 	}
 
-	baseDir := filepath.Dir(projectPath)
+	baseDir := projectPath
 
-	// 1. 检测/下载 Python
+	logger.Logf("=== 检查 ripgrep ===")
+	if err := updater.EnsureRipgrep(baseDir); err != nil {
+		return "", "", fmt.Errorf("准备 rg.exe 失败: %w", err)
+	}
+
 	logger.Logf("=== 检查 Python 环境 ===")
-	pythonPath, ok := env.DetectPython(baseDir)
+	pythonPath, ok := env.DetectVenvPython(baseDir)
 	if !ok {
-		logger.Logf("未找到 Python，开始自动下载 ...")
-		if err := env.DownloadPython(baseDir, logger); err != nil {
-			return nil, fmt.Errorf("Python 下载失败: %w", err)
-		}
-		pythonPath, _ = env.DetectPython(baseDir)
-		if pythonPath == "" {
-			return nil, fmt.Errorf("安装 Python 后仍无法找到")
+		logger.Logf("未找到虚拟环境，检测系统 Python...")
+		check := env.CheckSystemPython()
+		if check.Found && check.Ok {
+			logger.Logf("系统 Python 满足要求: %s", check.Version)
+			pythonPath, err = env.EnsureVenv(baseDir, "python", logger)
+			if err != nil {
+				return "", "", fmt.Errorf("创建虚拟环境失败: %w", err)
+			}
+		} else {
+			logger.Logf("%s，开始准备便携版 Python...", check.Message)
+			portablePython, err := env.EnsurePython(baseDir, logger)
+			if err != nil {
+				return "", "", fmt.Errorf("准备便携版 Python 失败: %w", err)
+			}
+			pythonPath, err = env.EnsureVenv(baseDir, portablePython, logger)
+			if err != nil {
+				return "", "", fmt.Errorf("创建虚拟环境失败: %w", err)
+			}
 		}
 	}
 	logger.Logf("使用 Python: %s", pythonPath)
 
-	// 2. 检测/下载 Node
 	logger.Logf("=== 检查 Node.js 环境 ===")
-	nodePath, ok := env.DetectNode(baseDir)
+	nodePath, ok = env.DetectNode(baseDir)
 	if !ok {
-		logger.Logf("未找到 Node.js，开始自动下载 ...")
+		logger.Logf("未找到便携版 Node.js，开始下载...")
 		if err := env.DownloadNode(baseDir, logger); err != nil {
-			return nil, fmt.Errorf("Node.js 下载失败: %w", err)
+			return "", "", fmt.Errorf("下载便携版 Node.js 失败: %w", err)
 		}
-		nodePath, _ = env.DetectNode(baseDir)
-		if nodePath == "" {
-			return nil, fmt.Errorf("安装 Node.js 后仍无法找到")
+		nodePath, ok = env.DetectNode(baseDir)
+		if !ok {
+			return "", "", fmt.Errorf("下载后仍未找到 Node.js")
 		}
 	}
 	logger.Logf("使用 Node.js: %s", nodePath)
 
-	// 3. 检查项目目录
-	if _, err := os.Stat(projectPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("项目目录不存在: %s，请先更新下载项目", projectPath)
+	if _, err := os.Stat(filepath.Join(projectPath, ".git")); os.IsNotExist(err) {
+		return "", "", fmt.Errorf("项目仓库不存在: %s，请先更新下载项目", projectPath)
 	}
 
-	// 4. 配置迁移
 	logger.Logf("=== 检查配置迁移 ===")
 	if err := migration.RunAll(projectPath); err != nil {
-		return nil, fmt.Errorf("配置迁移失败: %w", err)
+		return "", "", fmt.Errorf("配置迁移失败: %w", err)
 	}
 
-	// 5. 后端环境：虚拟环境 + pip install（Electron 会自己启动后端）
-	logger.Logf("=== 部署后端环境 ===")
-	venvPython, err := backend.EnsureVenv(projectPath, pythonPath, logger)
+	return pythonPath, nodePath, nil
+}
+
+// LaunchAll 完成环境准备并启动前端（Electron 自管后端）
+// projectPath 是项目根目录（即 ai-novelist 目录，包含 .git、main.py、frontend/ 等）
+func LaunchAll(projectPath string, logger Logger) (*LaunchResult, error) {
+	pythonPath, nodePath, err := getEnvPaths(projectPath, logger)
 	if err != nil {
 		return nil, err
 	}
-	if err := backend.PipInstall(projectPath, venvPython, pipMirror, logger); err != nil {
+
+	logger.Logf("=== 部署后端环境 ===")
+	if err := backend.PipInstall(projectPath, pythonPath, logger); err != nil {
 		return nil, err
 	}
+	logger.Logf("=== 后端依赖部署完成 ===")
 
-	// 6. 前端：npm install + 启动（Electron 自管后端）
+	// 前端：npm install + 启动（Electron 自管后端）
 	logger.Logf("=== 部署前端 ===")
-	if err := frontend.NpmInstall(projectPath, nodePath, npmMirror, logger); err != nil {
+	if err := frontend.NpmInstall(projectPath, nodePath, logger); err != nil {
 		return nil, err
 	}
 	frontendCmd, err := frontend.Start(projectPath, nodePath, logger)

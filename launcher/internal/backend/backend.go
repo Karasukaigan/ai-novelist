@@ -3,10 +3,12 @@ package backend
 import (
 	"bufio"
 	"fmt"
+	"launcher/internal/updater"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"time"
 )
 
@@ -14,52 +16,16 @@ type Logger interface {
 	Logf(format string, args ...interface{})
 }
 
-func EnsureVenv(projectPath, pythonPath string, logger Logger) (string, error) {
-	venvDir := filepath.Join(projectPath, "venv")
-	venvPython := filepath.Join(venvDir, "Scripts", "python.exe")
-
-	if _, err := os.Stat(venvPython); err == nil {
-		logger.Logf("虚拟环境已存在")
-		return venvPython, nil
-	}
-
-	logger.Logf("正在创建虚拟环境 ...")
-	cmd := exec.Command(pythonPath, "-m", "venv", venvDir)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("创建虚拟环境失败: %w\n%s", err, string(out))
-	}
-
-	logger.Logf("虚拟环境创建完成")
-	return venvPython, nil
-}
-
-func PipInstall(projectPath, venvPython, mirrorURL string, logger Logger) error {
+func PipInstall(projectPath, pythonPath string, logger Logger) error {
 	reqFile := filepath.Join(projectPath, "backend", "requirements.txt")
 	if _, err := os.Stat(reqFile); os.IsNotExist(err) {
 		return fmt.Errorf("requirements.txt 不存在: %s", reqFile)
 	}
 
-	logger.Logf("正在升级 pip ...")
-	upgradeArgs := []string{"-m", "pip", "install", "--upgrade", "pip"}
-	if mirrorURL != "" {
-		upgradeArgs = append(upgradeArgs, "-i", mirrorURL)
-	}
-	cmd := exec.Command(venvPython, upgradeArgs...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		logger.Logf("升级 pip 警告: %v", err)
-	} else {
-		logger.Logf("pip 升级完成")
-	}
-	_ = out
-
 	logger.Logf("正在安装后端依赖（可能需要几分钟）...")
-	installArgs := []string{"-m", "pip", "install", "-r", reqFile}
-	if mirrorURL != "" {
-		installArgs = append(installArgs, "-i", mirrorURL)
-	}
-	cmd = exec.Command(venvPython, installArgs...)
+	installArgs := []string{"-m", "pip", "install", "-r", reqFile, "-i", updater.PipMirror}
+	cmd := exec.Command(pythonPath, installArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()
@@ -90,13 +56,14 @@ func PipInstall(projectPath, venvPython, mirrorURL string, logger Logger) error 
 	return nil
 }
 
-func Start(projectPath, venvPython string, logger Logger) (*exec.Cmd, error) {
+func Start(projectPath, pythonPath string, logger Logger) (*exec.Cmd, error) {
 	mainPy := filepath.Join(projectPath, "main.py")
 	if _, err := os.Stat(mainPy); os.IsNotExist(err) {
 		return nil, fmt.Errorf("main.py 不存在: %s", mainPy)
 	}
 
-	cmd := exec.Command(venvPython, mainPy)
+	cmd := exec.Command(pythonPath, mainPy)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	cmd.Dir = projectPath
 
 	stdout, err := cmd.StdoutPipe()
