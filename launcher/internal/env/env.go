@@ -105,74 +105,42 @@ func isWindowsAppsPath(path string) bool {
 	return strings.Contains(strings.ToLower(path), `microsoft\windowsapps`)
 }
 
-// EnsurePython 确保 Python 已就绪
-// 优先从同级目录的安装包安装，否则从镜像下载安装包后弹出安装向导让用户手动安装
-func EnsurePython(baseDir string, logger Logger) (string, error) {
-	binDir := getBinDir(baseDir)
-	pythonDir := filepath.Join(binDir, "python")
-	pythonExe := filepath.Join(pythonDir, "python.exe")
-
-	if _, err := os.Stat(pythonExe); err == nil {
-		logger.Logf("Python 已存在: %s", pythonExe)
-		return pythonExe, nil
-	}
-
-	os.MkdirAll(binDir, os.ModePerm)
-
-	// 1. 查找启动器同级目录的 Python 安装包
+// DownloadPythonInstaller 下载 Python 安装包到启动器同级目录，不自动安装
+// 下载完成后提醒用户手动安装
+func DownloadPythonInstaller(baseDir string, logger Logger) error {
 	exePath, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("获取启动器路径失败: %w", err)
+		return fmt.Errorf("获取启动器路径失败: %w", err)
 	}
 	exeDir := filepath.Dir(exePath)
 
+	// 检查是否已有安装包
 	entries, err := os.ReadDir(exeDir)
 	if err != nil {
-		return "", fmt.Errorf("读取目录失败: %w", err)
+		return fmt.Errorf("读取目录失败: %w", err)
 	}
-
-	var installerPath string
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
 		}
 		name := strings.ToLower(entry.Name())
 		if strings.HasPrefix(name, "python-") && strings.HasSuffix(name, ".exe") {
-			installerPath = filepath.Join(exeDir, entry.Name())
-			break
+			logger.Logf("Python 安装包已存在: %s", entry.Name())
+			logger.Logf("请手动运行该安装包进行安装，安装完成后重新点击「准备环境」")
+			return nil
 		}
 	}
 
-	// 2. 未找到安装包则下载
-	if installerPath == "" {
-		installerName := "python-3.12.9-amd64.exe"
-		installerPath = filepath.Join(exeDir, installerName)
-		url := "https://mirrors.aliyun.com/python-release/windows/" + installerName
-		logger.Logf("未找到本地 Python 安装包，正在从镜像下载 %s ...", installerName)
-		if err := downloadFile(url, installerPath, logger); err != nil {
-			return "", fmt.Errorf("下载 Python 安装包失败: %w", err)
-		}
-		logger.Logf("Python 安装包下载完成: %s", installerPath)
+	installerName := "python-3.12.9-amd64.exe"
+	installerPath := filepath.Join(exeDir, installerName)
+	url := "https://mirrors.aliyun.com/python-release/windows/" + installerName
+	logger.Logf("正在从镜像下载 %s ...", installerName)
+	if err := downloadFile(url, installerPath, logger); err != nil {
+		return fmt.Errorf("下载 Python 安装包失败: %w", err)
 	}
-
-	// 启动 Python 安装向导（显示完整安装界面，让用户手动勾选复选框后安装）
-	logger.Logf("正在启动 Python 安装向导: %s", filepath.Base(installerPath))
-	logger.Logf("请在安装向导中勾选所需选项后手动点击安装，安装完成后关闭向导回到启动器")
-	cmd := exec.Command(
-		installerPath,
-		fmt.Sprintf("TargetDir=%s", pythonDir), // 自定义安装路径
-	)
-	err = cmd.Run()
-	if err != nil {
-		return "", fmt.Errorf("Python 安装失败或被取消: %w", err)
-	}
-
-	if _, err := os.Stat(pythonExe); err != nil {
-		return "", fmt.Errorf("安装后未找到 python.exe，请确认安装向导中已正确安装")
-	}
-
-	logger.Logf("Python 安装完成: %s", pythonExe)
-	return pythonExe, nil
+	logger.Logf("Python 安装包下载完成: %s", installerPath)
+	logger.Logf("请手动运行该安装包进行安装，安装完成后重新点击「准备环境」")
+	return nil
 }
 
 // EnsureVenv 确保 .venv 虚拟环境已创建

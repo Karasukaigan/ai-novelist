@@ -18,26 +18,19 @@ import {
 } from './store/launcher';
 import { useTheme } from './context/ThemeContext';
 import {
-  CheckPythonVersion,
   CheckUpdate,
   GetLogs,
   GetVersion,
   IsMainProgramRunning,
   IsProjectDeployed,
-  LaunchMainProgram,
+  PrepareEnvironment,
+  DownloadLaunch,
   LoadConfig,
   PerformUpdate,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime';
 import GitManager from './components/GitManager';
 import WebviewTab from './components/WebviewTab';
-
-interface PythonVersionCheck {
-  found: boolean;
-  version: string;
-  ok: boolean;
-  message: string;
-}
 
 function App() {
   const dispatch = useDispatch();
@@ -59,8 +52,7 @@ function App() {
   const logRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<'launcher' | 'git'>('launcher');
   const [deployed, setDeployed] = useState<boolean>(false);
-  const [pythonCheck, setPythonCheck] = useState<PythonVersionCheck | null>(null);
-  const [showPythonAlert, setShowPythonAlert] = useState(false);
+  const [preparing, setPreparing] = useState(false);
 
   const refreshStatus = async () => {
     try {
@@ -72,16 +64,7 @@ function App() {
   };
 
   useEffect(() => {
-    LoadConfig().then((cfg) => {
-      // 检测是否需要检查 Python 3.12
-      if (cfg?.Python?.require_3_12) {
-        CheckPythonVersion().then((check) => {
-          setPythonCheck(check);
-          if (!check.ok) {
-            setShowPythonAlert(true);
-          }
-        });
-      }
+    LoadConfig().then(() => {
       IsProjectDeployed().then((d: boolean) => {
         setDeployed(d);
         refreshStatus();
@@ -156,11 +139,23 @@ function App() {
     }
   };
 
-  const handleLaunch = async () => {
-    dispatch(setLaunching(true));
-    dispatch(setLaunchPhase('准备启动...'));
+  const handlePrepareEnvironment = async () => {
+    setPreparing(true);
     try {
-      await LaunchMainProgram();
+      await PrepareEnvironment();
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      dispatch(addLog(`环境准备失败: ${msg}\n`));
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  const handleDownloadLaunch = async () => {
+    dispatch(setLaunching(true));
+    dispatch(setLaunchPhase('下载依赖并启动...'));
+    try {
+      await DownloadLaunch();
     } catch (err: any) {
       const msg = err?.message || String(err);
       dispatch(addLog(`启动失败: ${msg}\n`));
@@ -174,14 +169,6 @@ function App() {
     await navigator.clipboard.writeText(text);
     dispatch(setCopied(true));
     setTimeout(() => dispatch(setCopied(false)), 1500);
-  };
-
-  const handleOpenInstallGuide = () => {
-    dispatch(addWebviewTab({
-      id: 'python-install-guide',
-      title: 'Python 安装教程',
-      url: 'https://denghuominghui.cn',
-    }));
   };
 
   const remoteMsg = updateStatus?.remote_commit?.message ?? '';
@@ -238,32 +225,28 @@ function App() {
       <main className="main">
         {tab === 'launcher' ? (
           <>
-            {showPythonAlert && pythonCheck && (
-              <div className="python-alert" style={{ background: theme.dark, borderColor: theme.warn }}>
-                <span className="python-alert-msg" style={{ color: theme.warn }}>
-                  {pythonCheck.message}
-                </span>
-                <button className="btn warn" onClick={handleOpenInstallGuide}>
-                  查看安装教程
-                </button>
-              </div>
-            )}
-
             <div className="toolbar">
               <button
                 className="btn warn"
                 onClick={handleUpdateButtonClick}
-                disabled={checkingUpdate || updating || launching}
+                disabled={checkingUpdate || updating || launching || preparing}
               >
                 {getUpdateButtonText()}
               </button>
               <button
+                className="btn"
+                onClick={handlePrepareEnvironment}
+                disabled={preparing || launching || updating}
+              >
+                {preparing ? '准备中...' : '准备环境'}
+              </button>
+              <button
                 className="btn primary"
-                onClick={handleLaunch}
-                disabled={mainRunning || launching || !deployed}
+                onClick={handleDownloadLaunch}
+                disabled={mainRunning || launching || preparing || !deployed}
                 title={mainRunning ? '主程序正在运行中' : !deployed ? '请先下载项目' : ''}
               >
-                {mainRunning ? '运行中' : launching ? '启动中...' : '启动程序'}
+                {mainRunning ? '运行中' : launching ? '下载启动中...' : '下载启动'}
               </button>
               <button
                 className={`btn ${copied ? 'success' : ''}`}

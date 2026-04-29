@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"launcher/internal/env"
 	"launcher/internal/gitman"
 	"launcher/internal/gitservice"
 	"launcher/internal/launcher"
@@ -139,7 +138,16 @@ func (a *App) PerformUpdate() error {
 	return updater.PullUpdates(a.config, a)
 }
 
-func (a *App) LaunchMainProgram() error {
+func (a *App) PrepareEnvironment() error {
+	if a.config == nil {
+		return fmt.Errorf("配置未加载")
+	}
+
+	projectDir := a.getProjectDir()
+	return launcher.PrepareEnvironment(projectDir, a)
+}
+
+func (a *App) DownloadLaunch() error {
 	if a.config == nil {
 		return fmt.Errorf("配置未加载")
 	}
@@ -153,7 +161,7 @@ func (a *App) LaunchMainProgram() error {
 	projectDir := a.getProjectDir()
 
 	go func() {
-		result, err := launcher.LaunchAll(projectDir, a)
+		result, err := launcher.DownloadLaunch(projectDir, a)
 		if err != nil {
 			a.Logf("启动失败: %v", err)
 			a.emitMainProgramState(false)
@@ -293,11 +301,6 @@ func (a *App) GitSwitchBranch(name string) error {
 func (a *App) GitCreateBranch(name string) error {
 	projectDir := a.getProjectDir()
 	return gitman.CreateBranch(projectDir, name)
-}
-
-// CheckPythonVersion 检测系统 Python 版本，返回检测结果
-func (a *App) CheckPythonVersion() env.PythonVersionCheck {
-	return env.CheckSystemPython()
 }
 
 // OpenWebviewTab 打开一个 Webview 标签页，显示指定 URL

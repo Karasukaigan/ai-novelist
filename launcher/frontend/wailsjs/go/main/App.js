@@ -6,12 +6,12 @@ export function AutoCheckUpdate() {
   return window['go']['main']['App']['AutoCheckUpdate']();
 }
 
-export function CheckPythonVersion() {
-  return window['go']['main']['App']['CheckPythonVersion']();
-}
-
 export function CheckUpdate() {
   return window['go']['main']['App']['CheckUpdate']();
+}
+
+export function DownloadLaunch() {
+  return window['go']['main']['App']['DownloadLaunch']();
 }
 
 export function GetGitServerAddress() {
@@ -62,10 +62,6 @@ export function KillMainProgram() {
   return window['go']['main']['App']['KillMainProgram']();
 }
 
-export function LaunchMainProgram() {
-  return window['go']['main']['App']['LaunchMainProgram']();
-}
-
 export function LoadConfig() {
   return window['go']['main']['App']['LoadConfig']();
 }
@@ -80,6 +76,10 @@ export function OpenWebviewTab(arg1, arg2) {
 
 export function PerformUpdate() {
   return window['go']['main']['App']['PerformUpdate']();
+}
+
+export function PrepareEnvironment() {
+  return window['go']['main']['App']['PrepareEnvironment']();
 }
 
 export function Progress(arg1) {
