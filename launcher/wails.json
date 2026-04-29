@@ -9,5 +9,12 @@
   "author": {
     "name": "FlickeringLamp",
     "email": "3454877998@qq.com"
+  },
+  "info": {
+    "companyName": "灯火明晦（FlickerLamp）",
+    "productName": "青烛启动器",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2026 FlickeringLamp",
+    "comments": "青烛 AI Novelist Launcher"
   }
 }

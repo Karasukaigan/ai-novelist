@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -106,6 +107,108 @@ func EnsureRipgrep(projectDir string) error {
 		return fmt.Errorf("复制 rg.exe 失败: %w", err)
 	}
 
+	return nil
+}
+
+// EnsureGit 检查启动器同级目录是否有 PortableGit 安装包，下载后解压到 qingzhu/bin/git/ 下
+func EnsureGit(projectDir string, logger Logger) error {
+	exeDir := getExeDir()
+	dstDir := filepath.Join(projectDir, "bin", "git")
+	gitExe := filepath.Join(dstDir, "bin", "git.exe")
+
+	// 已存在则跳过
+	if _, err := os.Stat(gitExe); err == nil {
+		return nil
+	}
+
+	// 检查启动器同级目录是否有安装包
+	installerName := "PortableGit-2.54.0-64-bit.7z.exe"
+	installerPath := filepath.Join(exeDir, installerName)
+
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		// 下载
+		url := "https://registry.npmmirror.com/-/binary/git-for-windows/v2.54.0.windows.1/PortableGit-2.54.0-64-bit.7z.exe"
+		if logger != nil {
+			logger.Logf("正在下载 Git 便携包 ...")
+		}
+		if err := downloadFile(url, installerPath, logger); err != nil {
+			return fmt.Errorf("下载 Git 便携包失败: %w", err)
+		}
+	}
+
+	// 解压到目标目录
+	if logger != nil {
+		logger.Logf("正在解压 Git ...")
+	}
+	os.MkdirAll(dstDir, 0755)
+
+	// PortableGit-2.54.0-64-bit.7z.exe 是自解压 7z 文件，使用 /S 静默解压到指定目录
+	cmd := exec.Command(installerPath, fmt.Sprintf("-o%s", dstDir), "-y")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("解压 Git 便携包失败: %w", err)
+	}
+
+	if _, err := os.Stat(gitExe); os.IsNotExist(err) {
+		return fmt.Errorf("解压后未找到 git.exe")
+	}
+
+	if logger != nil {
+		logger.Logf("Git 安装完成: %s", gitExe)
+	}
+	return nil
+}
+
+func downloadFile(url, dest string, logger Logger) error {
+	client := &http.Client{Timeout: 10 * time.Minute}
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8")
+	req.Header.Set("Referer", "https://mirrors.tuna.tsinghua.edu.cn/")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(dest)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	total := resp.ContentLength
+	var written int64
+	buf := make([]byte, 32*1024)
+
+	for {
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			_, werr := out.Write(buf[:n])
+			if werr != nil {
+				return werr
+			}
+			written += int64(n)
+			if logger != nil && total > 0 {
+				pct := int(float64(written) / float64(total) * 100)
+				logger.Progress(pct)
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+	}
 	return nil
 }
 

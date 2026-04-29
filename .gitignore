@@ -12,7 +12,6 @@ frontend/node_modules/
 # Build artifacts
 dist/
 frontend/build/
-build/
 frontend/electron-dist
 # IDE and Editor files
 .idea/

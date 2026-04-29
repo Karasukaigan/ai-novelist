@@ -44,6 +44,7 @@ class Settings:
         self.NODE_EXECUTABLE: str = self._get_executable('node.exe')
         self.NPM_EXECUTABLE: str = self._get_executable('npm.cmd')
         self.RG_EXECUTABLE: str = self._get_executable('rg.exe')
+        self.GIT_EXECUTABLE: str = self._get_executable('git.exe')
         
         # 初始化环境变量管理器
         self.env_manager = EnvManager(self.ENV_FILE_PATH)
@@ -66,6 +67,12 @@ class Settings:
         # Node.js 解压到 bin/node/ 子目录下
         if exe_name in ('node.exe', 'npm.cmd', 'npx.cmd'):
             exe_path = bin_dir / 'node' / exe_name
+            if exe_path.exists():
+                logger.info(f"使用项目自带的 {exe_name}: {exe_path}")
+                return str(exe_path)
+        # Git 解压到 bin/git/bin/ 子目录下
+        if exe_name == 'git.exe':
+            exe_path = bin_dir / 'git' / 'bin' / exe_name
             if exe_path.exists():
                 logger.info(f"使用项目自带的 {exe_name}: {exe_path}")
                 return str(exe_path)

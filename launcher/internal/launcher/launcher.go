@@ -40,6 +40,11 @@ func getEnvPaths(projectPath string, logger Logger) (pythonPath, nodePath string
 		return "", "", fmt.Errorf("准备 rg.exe 失败: %w", err)
 	}
 
+	logger.Logf("=== 检查 Git ===")
+	if err := updater.EnsureGit(baseDir, logger); err != nil {
+		return "", "", fmt.Errorf("准备 Git 失败: %w", err)
+	}
+
 	logger.Logf("=== 检查 Python 环境 ===")
 	pythonPath, ok := env.DetectVenvPython(baseDir)
 	if !ok {
@@ -52,10 +57,10 @@ func getEnvPaths(projectPath string, logger Logger) (pythonPath, nodePath string
 				return "", "", fmt.Errorf("创建虚拟环境失败: %w", err)
 			}
 		} else {
-			logger.Logf("%s，开始准备便携版 Python...", check.Message)
+			logger.Logf("%s，开始准备项目专用 Python...", check.Message)
 			portablePython, err := env.EnsurePython(baseDir, logger)
 			if err != nil {
-				return "", "", fmt.Errorf("准备便携版 Python 失败: %w", err)
+				return "", "", fmt.Errorf("准备项目专用 Python 失败: %w", err)
 			}
 			pythonPath, err = env.EnsureVenv(baseDir, portablePython, logger)
 			if err != nil {

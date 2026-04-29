@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 type Logger interface {
@@ -42,8 +44,69 @@ func DetectNode(baseDir string) (string, bool) {
 	return "", false
 }
 
+// findSystemPython 查找系统中真实安装的 Python 路径
+// 绕过 Windows App Execution Alias（WindowsApps 下的假 python.exe）
+func findSystemPython() (string, error) {
+	// 1. 尝试 exec.LookPath，如果找到的路径不在 WindowsApps 下则直接使用
+	if pyPath, err := exec.LookPath("python"); err == nil {
+		if !isWindowsAppsPath(pyPath) {
+			if _, err := exec.Command(pyPath, "--version").Output(); err == nil {
+				return pyPath, nil
+			}
+		}
+	}
+	if pyPath, err := exec.LookPath("python3"); err == nil {
+		if !isWindowsAppsPath(pyPath) {
+			if _, err := exec.Command(pyPath, "--version").Output(); err == nil {
+				return pyPath, nil
+			}
+		}
+	}
+
+	// 2. 查注册表 HKLM\SOFTWARE\Python\PythonCore\{version}\InstallPath
+	//    以及 HKCU\SOFTWARE\Python\PythonCore\{version}\InstallPath
+	for _, root := range []registry.Key{registry.LOCAL_MACHINE, registry.CURRENT_USER} {
+		baseKey := `SOFTWARE\Python\PythonCore`
+		k, err := registry.OpenKey(root, baseKey, registry.READ)
+		if err != nil {
+			continue
+		}
+		subKeys, err := k.ReadSubKeyNames(0)
+		k.Close()
+		if err != nil {
+			continue
+		}
+		for _, ver := range subKeys {
+			installKey := baseKey + `\` + ver + `\InstallPath`
+			ik, err := registry.OpenKey(root, installKey, registry.READ)
+			if err != nil {
+				continue
+			}
+			installPath, _, err := ik.GetStringValue("")
+			ik.Close()
+			if err != nil || installPath == "" {
+				continue
+			}
+			pyPath := filepath.Join(installPath, "python.exe")
+			if _, err := os.Stat(pyPath); err != nil {
+				continue
+			}
+			if _, err := exec.Command(pyPath, "--version").Output(); err == nil {
+				return pyPath, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("未找到系统 Python")
+}
+
+// isWindowsAppsPath 判断路径是否在 Windows App Execution Alias 目录下
+func isWindowsAppsPath(path string) bool {
+	return strings.Contains(strings.ToLower(path), `microsoft\windowsapps`)
+}
+
 // EnsurePython 确保 Python 已就绪
-// 优先从同级目录的安装包静默安装，否则提示用户
+// 优先从同级目录的安装包安装，否则从镜像下载安装包后弹出安装向导让用户手动安装
 func EnsurePython(baseDir string, logger Logger) (string, error) {
 	binDir := getBinDir(baseDir)
 	pythonDir := filepath.Join(binDir, "python")
@@ -80,17 +143,24 @@ func EnsurePython(baseDir string, logger Logger) (string, error) {
 		}
 	}
 
+	// 2. 未找到安装包则下载
 	if installerPath == "" {
-		return "", fmt.Errorf("未找到 Python 安装包，请在启动器同级目录放置 python-*-amd64.exe 后重试")
+		installerName := "python-3.12.9-amd64.exe"
+		installerPath = filepath.Join(exeDir, installerName)
+		url := "https://mirrors.aliyun.com/python-release/windows/" + installerName
+		logger.Logf("未找到本地 Python 安装包，正在从镜像下载 %s ...", installerName)
+		if err := downloadFile(url, installerPath, logger); err != nil {
+			return "", fmt.Errorf("下载 Python 安装包失败: %w", err)
+		}
+		logger.Logf("Python 安装包下载完成: %s", installerPath)
 	}
 
-	// 2. 弹出安装向导
+	// 启动 Python 安装向导（显示完整安装界面，让用户手动勾选复选框后安装）
 	logger.Logf("正在启动 Python 安装向导: %s", filepath.Base(installerPath))
-	cmd := exec.Command(installerPath,
-		"InstallAllUsers=1",
-		fmt.Sprintf("TargetDir=%s", pythonDir),
-		"PrependPath=1",
-		"AssociateFiles=0",
+	logger.Logf("请在安装向导中勾选所需选项后手动点击安装，安装完成后关闭向导回到启动器")
+	cmd := exec.Command(
+		installerPath,
+		fmt.Sprintf("TargetDir=%s", pythonDir), // 自定义安装路径
 	)
 	err = cmd.Run()
 	if err != nil {
@@ -164,6 +234,92 @@ func DownloadNode(baseDir string, logger Logger) error {
 
 	logger.Logf("Node.js 安装完成")
 	return nil
+}
+
+// PythonVersionCheck 系统 Python 版本检测结果
+type PythonVersionCheck struct {
+	Found   bool   `json:"found"`
+	Version string `json:"version"`
+	Ok      bool   `json:"ok"`
+	Message string `json:"message"`
+}
+
+// CheckSystemPython 检测系统 Python 版本是否 >= 3.12.0
+// 绕过 Windows App Execution Alias，通过注册表查找真实安装路径
+func CheckSystemPython() PythonVersionCheck {
+	pyPath, err := findSystemPython()
+	if err != nil {
+		return PythonVersionCheck{
+			Found:   false,
+			Version: "",
+			Ok:      false,
+			Message: "未检测到系统 Python，请先安装 Python 3.12 或更高版本",
+		}
+	}
+
+	// 获取版本
+	cmd := exec.Command(pyPath, "--version")
+	out, err := cmd.Output()
+	if err != nil {
+		return PythonVersionCheck{
+			Found:   true,
+			Version: "",
+			Ok:      false,
+			Message: "无法获取 Python 版本信息",
+		}
+	}
+
+	verStr := strings.TrimSpace(string(out))
+	version := parsePythonVersion(verStr)
+	if version == "" {
+		return PythonVersionCheck{
+			Found:   true,
+			Version: verStr,
+			Ok:      false,
+			Message: "无法解析 Python 版本: " + verStr,
+		}
+	}
+
+	// 比较版本是否 >= 3.12.0
+	ok := !versionLessThan(version, "3.12.0")
+	msg := fmt.Sprintf("当前 Python 版本: %s", version)
+	if !ok {
+		msg = fmt.Sprintf("当前 Python 版本 %s 过低，建议安装 3.12 或更高版本以避免兼容性问题", version)
+	}
+
+	return PythonVersionCheck{
+		Found:   true,
+		Version: version,
+		Ok:      ok,
+		Message: msg,
+	}
+}
+
+// parsePythonVersion 从 "Python 3.13.9" 中提取 "3.13.9"
+func parsePythonVersion(output string) string {
+	re := regexp.MustCompile(`Python\s+([\d.]+)`)
+	m := re.FindStringSubmatch(output)
+	if len(m) >= 2 {
+		return m[1]
+	}
+	return ""
+}
+
+// versionLessThan 比较两个版本号字符串 a < b
+func versionLessThan(a, b string) bool {
+	pa := strings.Split(a, ".")
+	pb := strings.Split(b, ".")
+	for i := 0; i < len(pa) && i < len(pb); i++ {
+		na, _ := strconv.Atoi(pa[i])
+		nb, _ := strconv.Atoi(pb[i])
+		if na < nb {
+			return true
+		}
+		if na > nb {
+			return false
+		}
+	}
+	return len(pa) < len(pb)
 }
 
 func downloadFile(url, dest string, logger Logger) error {
@@ -257,93 +413,4 @@ func unzip(src, dest string) error {
 		}
 	}
 	return nil
-}
-
-// PythonVersionCheck 系统 Python 版本检测结果
-type PythonVersionCheck struct {
-	Found   bool   `json:"found"`
-	Version string `json:"version"`
-	Ok      bool   `json:"ok"`
-	Message string `json:"message"`
-}
-
-// CheckSystemPython 检测系统 Python 版本是否 >= 3.12.0
-func CheckSystemPython() PythonVersionCheck {
-	// 1. 检测 python.exe
-	pyPath, err := exec.LookPath("python")
-	if err != nil {
-		pyPath, err = exec.LookPath("python3")
-		if err != nil {
-			return PythonVersionCheck{
-				Found:   false,
-				Version: "",
-				Ok:      false,
-				Message: "未检测到系统 Python，请先安装 Python 3.12 或更高版本",
-			}
-		}
-	}
-
-	// 2. 获取版本
-	cmd := exec.Command(pyPath, "--version")
-	out, err := cmd.Output()
-	if err != nil {
-		return PythonVersionCheck{
-			Found:   true,
-			Version: "",
-			Ok:      false,
-			Message: "无法获取 Python 版本信息",
-		}
-	}
-
-	verStr := strings.TrimSpace(string(out))
-	version := parsePythonVersion(verStr)
-	if version == "" {
-		return PythonVersionCheck{
-			Found:   true,
-			Version: verStr,
-			Ok:      false,
-			Message: "无法解析 Python 版本: " + verStr,
-		}
-	}
-
-	// 3. 比较版本是否 >= 3.12.0
-	ok := !versionLessThan(version, "3.12.0")
-	msg := fmt.Sprintf("当前 Python 版本: %s", version)
-	if !ok {
-		msg = fmt.Sprintf("当前 Python 版本 %s 过低，建议安装 3.12 或更高版本以避免兼容性问题", version)
-	}
-
-	return PythonVersionCheck{
-		Found:   true,
-		Version: version,
-		Ok:      ok,
-		Message: msg,
-	}
-}
-
-// parsePythonVersion 从 "Python 3.13.9" 中提取 "3.13.9"
-func parsePythonVersion(output string) string {
-	re := regexp.MustCompile(`Python\s+([\d.]+)`)
-	m := re.FindStringSubmatch(output)
-	if len(m) >= 2 {
-		return m[1]
-	}
-	return ""
-}
-
-// versionLessThan 比较两个版本号字符串 a < b
-func versionLessThan(a, b string) bool {
-	pa := strings.Split(a, ".")
-	pb := strings.Split(b, ".")
-	for i := 0; i < len(pa) && i < len(pb); i++ {
-		na, _ := strconv.Atoi(pa[i])
-		nb, _ := strconv.Atoi(pb[i])
-		if na < nb {
-			return true
-		}
-		if na > nb {
-			return false
-		}
-	}
-	return len(pa) < len(pb)
 }
