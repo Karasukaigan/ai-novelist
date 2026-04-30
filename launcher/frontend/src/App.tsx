@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import type { RootState } from './store/store';
 import {
   addLog,
+  setLogs,
   setCopied,
   setMainRunning,
   setProgress,
@@ -67,6 +68,11 @@ function App() {
     LoadConfig().then(() => {
       IsProjectDeployed().then((d: boolean) => {
         setDeployed(d);
+        if (!d) {
+          dispatch(setLogs([
+            '初次部署项目，请点击「下载项目」按钮\n',
+          ]));
+        }
         refreshStatus();
       });
       IsMainProgramRunning().then((running: boolean) => dispatch(setMainRunning(running)));
@@ -171,16 +177,12 @@ function App() {
     setTimeout(() => dispatch(setCopied(false)), 1500);
   };
 
-  const remoteMsg = updateStatus?.remote_commit?.message ?? '';
-  const remoteSha = updateStatus?.remote_commit?.sha ?? '';
-  const localSha = updateStatus?.local_commit?.sha ?? '';
-
   const getUpdateButtonText = () => {
     if (checkingUpdate) return '检查中...';
     if (updating) return '更新中...';
     if (!deployed) return '下载项目';
     if (updateStatus?.has_update) return '下载更新';
-    if (updateStatus !== null) return '当前已是最新更新';
+    if (updateStatus !== null) return '已是最新';
     return '检查更新';
   };
 
@@ -263,22 +265,6 @@ function App() {
               </div>
             )}
 
-            {updateStatus !== null && (
-              <div className="update-info">
-                <div className="commit-row">
-                  <span className="commit-label">远程提交:</span>
-                  <span className="commit-sha">{remoteSha.slice(0, 7)}</span>
-                </div>
-                <div className="commit-msg">{remoteMsg}</div>
-                {localSha && (
-                  <div className="commit-row">
-                    <span className="commit-label">本地提交:</span>
-                    <span className="commit-sha">{localSha.slice(0, 7)}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
             {progress > 0 && progress < 100 && (
               <div className="progress-bar">
                 <div className="progress-fill" style={{ width: `${progress}%` }} />
@@ -287,9 +273,6 @@ function App() {
             )}
 
             <div className="log-box" ref={logRef}>
-              {logs.length === 0 && (
-                <div className="log-placeholder">等待日志输出...</div>
-              )}
               {logs.map((line, idx) => (
                 <div key={idx} className="log-line">
                   <span className="log-prefix">{'>'}</span>

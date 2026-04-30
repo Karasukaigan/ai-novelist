@@ -374,9 +374,6 @@ func GetLocalCommit(projectDir string) (*CommitInfo, error) {
 
 func CheckUpdateStatus(cfg *Config, logger Logger) (*UpdateStatus, error) {
 	projectDir := GetProjectDir(cfg)
-	if logger != nil {
-		logger.Logf("[DEBUG] CheckUpdateStatus: projectDir=%s", projectDir)
-	}
 	repo, err := git.PlainOpen(projectDir)
 	currentBranch := "main"
 	if err == nil {
@@ -385,25 +382,12 @@ func CheckUpdateStatus(cfg *Config, logger Logger) (*UpdateStatus, error) {
 			currentBranch = head.Name().Short()
 		}
 	}
-	if logger != nil {
-		logger.Logf("[DEBUG] CheckUpdateStatus: currentBranch=%s", currentBranch)
-	}
 
 	remote, err := GetRemoteLatestCommit(cfg.Git.RemoteURL, currentBranch, logger)
 	if err != nil {
-		if logger != nil {
-			logger.Logf("[DEBUG] CheckUpdateStatus: GetRemoteLatestCommit 失败: %v", err)
-		}
 		return nil, err
 	}
 	local, _ := GetLocalCommit(projectDir)
-	if logger != nil {
-		if local != nil {
-			logger.Logf("[DEBUG] CheckUpdateStatus: local=%s, remote=%s", local.SHA[:7], remote.SHA[:7])
-		} else {
-			logger.Logf("[DEBUG] CheckUpdateStatus: local=nil, remote=%s", remote.SHA[:7])
-		}
-	}
 
 	status := &UpdateStatus{
 		HasUpdate:    true,
@@ -413,8 +397,21 @@ func CheckUpdateStatus(cfg *Config, logger Logger) (*UpdateStatus, error) {
 	if local != nil && local.SHA == remote.SHA {
 		status.HasUpdate = false
 	}
+
 	if logger != nil {
-		logger.Logf("[DEBUG] CheckUpdateStatus: HasUpdate=%v", status.HasUpdate)
+		if status.HasUpdate {
+			logger.Logf("发现新提交: %s", remote.SHA[:7])
+			logger.Logf("提交时间: %s", remote.Date)
+			logger.Logf("提交信息:")
+			for _, line := range strings.Split(remote.Message, "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					logger.Logf("  %s", line)
+				}
+			}
+		} else {
+			logger.Logf("当前已是最新提交: %s", remote.SHA[:7])
+		}
 	}
 	return status, nil
 }
@@ -541,6 +538,7 @@ func cloneProject(cfg *Config, logger Logger) error {
 	}
 
 	logger.Logf("项目克隆完成")
+	logger.Logf("接下来点击「准备环境」按钮，将会检测系统环境，下载需要的安装包/便携包")
 	return nil
 }
 

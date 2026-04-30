@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -250,25 +249,12 @@ func (a *App) AutoCheckUpdate() {
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		a.Logf("=== %s 启动器 ===", a.config.App.Name)
-		a.Logf("[DEBUG] AutoCheckUpdate: 开始检查更新")
 
-		status, err := updater.CheckUpdateStatus(a.config, a)
+		_, err := updater.CheckUpdateStatus(a.config, a)
 		if err != nil {
-			a.Logf("检查更新失败: %v", err)
-			return
-		}
-		if status.HasUpdate {
-			a.Logf("发现新提交: %s", status.RemoteCommit.SHA[:7])
-			a.Logf("提交时间: %s", status.RemoteCommit.Date)
-			a.Logf("提交信息:")
-			for _, line := range strings.Split(status.RemoteCommit.Message, "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					a.Logf("  %s", line)
-				}
-			}
-		} else {
-			a.Logf("当前已是最新提交")
+			a.Logf("初次部署项目，或者需要更新项目，")
+			a.Logf("请点击「检查更新」按钮")
+			a.Logf("等待检查完成后，点击「下载更新」按钮")
 		}
 	}()
 }

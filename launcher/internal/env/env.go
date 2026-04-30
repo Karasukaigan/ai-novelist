@@ -44,9 +44,9 @@ func DetectNode(baseDir string) (string, bool) {
 	return "", false
 }
 
-// findSystemPython 查找系统中真实安装的 Python 路径
+// FindSystemPython 查找系统中真实安装的 Python 路径
 // 绕过 Windows App Execution Alias（WindowsApps 下的假 python.exe）
-func findSystemPython() (string, error) {
+func FindSystemPython() (string, error) {
 	// 1. 尝试 exec.LookPath，如果找到的路径不在 WindowsApps 下则直接使用
 	if pyPath, err := exec.LookPath("python"); err == nil {
 		if !isWindowsAppsPath(pyPath) {
@@ -105,8 +105,8 @@ func isWindowsAppsPath(path string) bool {
 	return strings.Contains(strings.ToLower(path), `microsoft\windowsapps`)
 }
 
-// DownloadPythonInstaller 下载 Python 安装包到启动器同级目录，不自动安装
-// 下载完成后提醒用户手动安装
+// DownloadPythonInstaller 下载 Python 安装包到启动器同级目录
+// 下载完成后自动启动安装向导，后续勾选配置与安装交给用户手动操作
 func DownloadPythonInstaller(baseDir string, logger Logger) error {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -114,32 +114,26 @@ func DownloadPythonInstaller(baseDir string, logger Logger) error {
 	}
 	exeDir := filepath.Dir(exePath)
 
-	// 检查是否已有安装包
-	entries, err := os.ReadDir(exeDir)
-	if err != nil {
-		return fmt.Errorf("读取目录失败: %w", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := strings.ToLower(entry.Name())
-		if strings.HasPrefix(name, "python-") && strings.HasSuffix(name, ".exe") {
-			logger.Logf("Python 安装包已存在: %s", entry.Name())
-			logger.Logf("请手动运行该安装包进行安装，安装完成后重新点击「准备环境」")
-			return nil
-		}
-	}
-
 	installerName := "python-3.12.9-amd64.exe"
 	installerPath := filepath.Join(exeDir, installerName)
-	url := "https://mirrors.aliyun.com/python-release/windows/" + installerName
-	logger.Logf("正在从镜像下载 %s ...", installerName)
-	if err := downloadFile(url, installerPath, logger); err != nil {
-		return fmt.Errorf("下载 Python 安装包失败: %w", err)
+
+	// 检查安装包是否已存在
+	if _, err := os.Stat(installerPath); os.IsNotExist(err) {
+		url := "https://mirrors.aliyun.com/python-release/windows/" + installerName
+		logger.Logf("正在从镜像下载 %s ...", installerName)
+		if err := downloadFile(url, installerPath, logger); err != nil {
+			return fmt.Errorf("下载 Python 安装包失败: %w", err)
+		}
+		logger.Logf("Python 安装包下载完成: %s", installerPath)
+	} else {
+		logger.Logf("Python 安装包已存在: %s", installerPath)
 	}
-	logger.Logf("Python 安装包下载完成: %s", installerPath)
-	logger.Logf("请手动运行该安装包进行安装，安装完成后重新点击「准备环境」")
+	// 自动启动安装向导，让用户手动勾选配置并安装
+	logger.Logf("正在启动 Python 安装向导...")
+	cmd := exec.Command(installerPath)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("启动 Python 安装向导失败: %w", err)
+	}
 	return nil
 }
 
@@ -215,7 +209,7 @@ type PythonVersionCheck struct {
 // CheckSystemPython 检测系统 Python 版本是否 >= 3.12.0
 // 绕过 Windows App Execution Alias，通过注册表查找真实安装路径
 func CheckSystemPython() PythonVersionCheck {
-	pyPath, err := findSystemPython()
+	pyPath, err := FindSystemPython()
 	if err != nil {
 		return PythonVersionCheck{
 			Found:   false,

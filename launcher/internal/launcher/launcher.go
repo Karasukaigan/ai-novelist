@@ -67,18 +67,34 @@ func PrepareEnvironment(projectPath string, logger Logger) error {
 	} else {
 		check := env.CheckSystemPython()
 		if check.Found && check.Ok {
-			logger.Logf("系统 Python 满足要求: %s", check.Version)
+			logger.Logf("系统 Python 满足要求: %s, 可以点击 [下载启动] 按钮", check.Version)
 		} else {
 			logger.Logf("%s", check.Message)
 			logger.Logf("正在下载 Python 安装包，下载完成后请手动安装...")
 			if err := env.DownloadPythonInstaller(baseDir, logger); err != nil {
 				return fmt.Errorf("下载 Python 安装包失败: %w", err)
 			}
-			logger.Logf("Python 安装包已下载到启动器同级目录，请手动安装后重新点击「准备环境」")
+			logger.Logf("Python 安装包已下载到启动器同级目录，并打开安装界面")
+			logger.Logf("")
+			logger.Logf("======== python安装说明 ========")
+			logger.Logf("")
+			logger.Logf("1. 请先勾选下方两项")
+			logger.Logf("")
+			logger.Logf("  [ √ ] Use admin privileges when installing py.exe")
+			logger.Logf("  [ √ ] Add python.exe to PATH")
+			logger.Logf("")
+			logger.Logf("2. 然后点击 Install Now")
+			logger.Logf("")
+			logger.Logf("   \"是否允许该应用对此设备的更改\" 选择\"是\"")
+			logger.Logf("")
+			logger.Logf("================================")
+			logger.Logf("")
+			logger.Logf("手动安装后重新点击「准备环境」")
+			logger.Logf("如果显示：")
+			logger.Logf("     系统 Python 满足要求: 3.12.9（或其他 3.12.x 版本）, 可以点击 [下载启动] 按钮")
+			logger.Logf("则说明安装成功，可以继续点击「下载启动」按钮")
 		}
 	}
-
-	logger.Logf("=== 环境准备完成 ===")
 	return nil
 }
 
@@ -110,9 +126,14 @@ func DownloadLaunch(projectPath string, logger Logger) (*LaunchResult, error) {
 		logger.Logf("未找到虚拟环境，检测系统 Python...")
 		check := env.CheckSystemPython()
 		if check.Found && check.Ok {
-			logger.Logf("系统 Python 满足要求: %s", check.Version)
-			var err error
-			pythonPath, err = env.EnsureVenv(baseDir, "python", logger)
+			logger.Logf("系统 Python 满足要求: %s, 可以点击 [下载启动] 按钮", check.Version)
+			// 使用 findSystemPython 获取真实路径，绕过 Windows App Execution Alias
+			realPythonPath, err := env.FindSystemPython()
+			if err != nil {
+				return nil, fmt.Errorf("获取系统 Python 真实路径失败: %w", err)
+			}
+			logger.Logf("使用系统 Python: %s", realPythonPath)
+			pythonPath, err = env.EnsureVenv(baseDir, realPythonPath, logger)
 			if err != nil {
 				return nil, fmt.Errorf("创建虚拟环境失败: %w", err)
 			}
