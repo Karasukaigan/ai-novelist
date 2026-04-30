@@ -4,6 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import type { RootState } from './store/store';
 import {
   addLog,
+  setLogs,
   setCopied,
   setMainRunning,
   setProgress,
@@ -18,26 +19,19 @@ import {
 } from './store/launcher';
 import { useTheme } from './context/ThemeContext';
 import {
-  CheckPythonVersion,
   CheckUpdate,
   GetLogs,
   GetVersion,
   IsMainProgramRunning,
   IsProjectDeployed,
-  LaunchMainProgram,
+  PrepareEnvironment,
+  DownloadLaunch,
   LoadConfig,
   PerformUpdate,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime';
 import GitManager from './components/GitManager';
 import WebviewTab from './components/WebviewTab';
-
-interface PythonVersionCheck {
-  found: boolean;
-  version: string;
-  ok: boolean;
-  message: string;
-}
 
 function App() {
   const dispatch = useDispatch();
@@ -59,8 +53,7 @@ function App() {
   const logRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<'launcher' | 'git'>('launcher');
   const [deployed, setDeployed] = useState<boolean>(false);
-  const [pythonCheck, setPythonCheck] = useState<PythonVersionCheck | null>(null);
-  const [showPythonAlert, setShowPythonAlert] = useState(false);
+  const [preparing, setPreparing] = useState(false);
 
   const refreshStatus = async () => {
     try {
@@ -72,18 +65,14 @@ function App() {
   };
 
   useEffect(() => {
-    LoadConfig().then((cfg) => {
-      // 检测是否需要检查 Python 3.12
-      if (cfg?.Python?.require_3_12) {
-        CheckPythonVersion().then((check) => {
-          setPythonCheck(check);
-          if (!check.ok) {
-            setShowPythonAlert(true);
-          }
-        });
-      }
+    LoadConfig().then(() => {
       IsProjectDeployed().then((d: boolean) => {
         setDeployed(d);
+        if (!d) {
+          dispatch(setLogs([
+            '初次部署项目，请点击「下载项目」按钮\n',
+          ]));
+        }
         refreshStatus();
       });
       IsMainProgramRunning().then((running: boolean) => dispatch(setMainRunning(running)));
@@ -156,11 +145,23 @@ function App() {
     }
   };
 
-  const handleLaunch = async () => {
-    dispatch(setLaunching(true));
-    dispatch(setLaunchPhase('准备启动...'));
+  const handlePrepareEnvironment = async () => {
+    setPreparing(true);
     try {
-      await LaunchMainProgram();
+      await PrepareEnvironment();
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      dispatch(addLog(`环境准备失败: ${msg}\n`));
+    } finally {
+      setPreparing(false);
+    }
+  };
+
+  const handleDownloadLaunch = async () => {
+    dispatch(setLaunching(true));
+    dispatch(setLaunchPhase('下载依赖并启动...'));
+    try {
+      await DownloadLaunch();
     } catch (err: any) {
       const msg = err?.message || String(err);
       dispatch(addLog(`启动失败: ${msg}\n`));
@@ -176,24 +177,12 @@ function App() {
     setTimeout(() => dispatch(setCopied(false)), 1500);
   };
 
-  const handleOpenInstallGuide = () => {
-    dispatch(addWebviewTab({
-      id: 'python-install-guide',
-      title: 'Python 安装教程',
-      url: 'https://denghuominghui.cn',
-    }));
-  };
-
-  const remoteMsg = updateStatus?.remote_commit?.message ?? '';
-  const remoteSha = updateStatus?.remote_commit?.sha ?? '';
-  const localSha = updateStatus?.local_commit?.sha ?? '';
-
   const getUpdateButtonText = () => {
     if (checkingUpdate) return '检查中...';
     if (updating) return '更新中...';
     if (!deployed) return '下载项目';
     if (updateStatus?.has_update) return '下载更新';
-    if (updateStatus !== null) return '当前已是最新更新';
+    if (updateStatus !== null) return '已是最新';
     return '检查更新';
   };
 
@@ -238,32 +227,28 @@ function App() {
       <main className="main">
         {tab === 'launcher' ? (
           <>
-            {showPythonAlert && pythonCheck && (
-              <div className="python-alert" style={{ background: theme.dark, borderColor: theme.warn }}>
-                <span className="python-alert-msg" style={{ color: theme.warn }}>
-                  {pythonCheck.message}
-                </span>
-                <button className="btn warn" onClick={handleOpenInstallGuide}>
-                  查看安装教程
-                </button>
-              </div>
-            )}
-
             <div className="toolbar">
               <button
                 className="btn warn"
                 onClick={handleUpdateButtonClick}
-                disabled={checkingUpdate || updating || launching}
+                disabled={checkingUpdate || updating || launching || preparing}
               >
                 {getUpdateButtonText()}
               </button>
               <button
+                className="btn"
+                onClick={handlePrepareEnvironment}
+                disabled={preparing || launching || updating}
+              >
+                {preparing ? '准备中...' : '准备环境'}
+              </button>
+              <button
                 className="btn primary"
-                onClick={handleLaunch}
-                disabled={mainRunning || launching || !deployed}
+                onClick={handleDownloadLaunch}
+                disabled={mainRunning || launching || preparing || !deployed}
                 title={mainRunning ? '主程序正在运行中' : !deployed ? '请先下载项目' : ''}
               >
-                {mainRunning ? '运行中' : launching ? '启动中...' : '启动程序'}
+                {mainRunning ? '运行中' : launching ? '下载启动中...' : '下载启动'}
               </button>
               <button
                 className={`btn ${copied ? 'success' : ''}`}
@@ -280,22 +265,6 @@ function App() {
               </div>
             )}
 
-            {updateStatus !== null && (
-              <div className="update-info">
-                <div className="commit-row">
-                  <span className="commit-label">远程提交:</span>
-                  <span className="commit-sha">{remoteSha.slice(0, 7)}</span>
-                </div>
-                <div className="commit-msg">{remoteMsg}</div>
-                {localSha && (
-                  <div className="commit-row">
-                    <span className="commit-label">本地提交:</span>
-                    <span className="commit-sha">{localSha.slice(0, 7)}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
             {progress > 0 && progress < 100 && (
               <div className="progress-bar">
                 <div className="progress-fill" style={{ width: `${progress}%` }} />
@@ -304,9 +273,6 @@ function App() {
             )}
 
             <div className="log-box" ref={logRef}>
-              {logs.length === 0 && (
-                <div className="log-placeholder">等待日志输出...</div>
-              )}
               {logs.map((line, idx) => (
                 <div key={idx} className="log-line">
                   <span className="log-prefix">{'>'}</span>

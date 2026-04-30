@@ -1,26 +1,3 @@
-export namespace env {
-	
-	export class PythonVersionCheck {
-	    found: boolean;
-	    version: string;
-	    ok: boolean;
-	    message: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new PythonVersionCheck(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.found = source["found"];
-	        this.version = source["version"];
-	        this.ok = source["ok"];
-	        this.message = source["message"];
-	    }
-	}
-
-}
-
 export namespace gitman {
 	
 	export class BranchInfo {
