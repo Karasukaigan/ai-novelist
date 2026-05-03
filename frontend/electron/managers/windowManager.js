@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, ipcMain, globalShortcut } from 'electron';
+import { BrowserWindow, Menu, ipcMain } from 'electron';
 import { APP_CONFIG, isDev } from '../utils/constants.js';
 
 class WindowManager {
@@ -53,9 +53,9 @@ class WindowManager {
       this.mainWindow = null;
     });
 
-    // 注册快捷键：F12 切换 DevTools
-    globalShortcut.register('F12', () => {
-      if (this.mainWindow) {
+    // 注册快捷键：F12 切换 DevTools（仅当窗口聚焦时生效）
+    this.mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F12') {
         this.mainWindow.webContents.toggleDevTools();
       }
     });
