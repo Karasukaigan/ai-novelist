@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, ipcMain } from 'electron';
+import { BrowserWindow, Menu, ipcMain, globalShortcut } from 'electron';
 import { APP_CONFIG, isDev } from '../utils/constants.js';
 
 class WindowManager {
@@ -41,7 +41,6 @@ class WindowManager {
     // 加载页面
     if (isDev) {
       this.mainWindow.loadURL('http://localhost:3000');
-      this.mainWindow.webContents.openDevTools();
     } else {
       this.mainWindow.loadFile(APP_CONFIG.paths.indexHtml);
     }
@@ -52,6 +51,13 @@ class WindowManager {
         terminalManager.killAllTerminals();
       });
       this.mainWindow = null;
+    });
+
+    // 注册快捷键：F12 切换 DevTools
+    globalShortcut.register('F12', () => {
+      if (this.mainWindow) {
+        this.mainWindow.webContents.toggleDevTools();
+      }
     });
 
     return this.mainWindow;

@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, globalShortcut } from 'electron';
 import { backendManager } from './managers/backendManager.js';
 import { windowManager } from './managers/windowManager.js';
 import { terminalManager } from './managers/terminalManager.js';
@@ -33,6 +33,7 @@ app.on('window-all-closed', async () => {
 });
 
 app.on('before-quit', async () => {
+  globalShortcut.unregisterAll();
   await backendManager.stop();
   terminalManager.killAllTerminals();
 });
