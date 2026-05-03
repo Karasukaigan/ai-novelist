@@ -127,6 +127,8 @@ func (a *App) CheckUpdate() (*updater.UpdateStatus, error) {
 	if a.config == nil {
 		return nil, fmt.Errorf("配置未加载")
 	}
+	// 检查更新时先同步远程分支
+	updater.SyncBranchesFromRemote(a.config, a)
 	return updater.CheckUpdateStatus(a.config, a)
 }
 

@@ -51,7 +51,7 @@ function App() {
 
   const { theme } = useTheme();
   const logRef = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useState<'launcher' | 'git'>('launcher');
+  const [mainTab, setMainTab] = useState<'main' | 'version' | 'website'>('main');
   const [deployed, setDeployed] = useState<boolean>(false);
   const [preparing, setPreparing] = useState(false);
 
@@ -200,64 +200,70 @@ function App() {
 
   return (
     <div className="app" style={{ background: theme.black, color: theme.white }}>
-      <header className="header">
-        <h1>青烛启动器</h1>
-        <div className="header-right">
-          <div className="tabs">
-            <button
-              className={`tab-btn ${tab === 'launcher' ? 'active' : ''}`}
-              onClick={() => setTab('launcher')}
-            >
-              启动器
-            </button>
-            <button
-              className={`tab-btn ${tab === 'git' ? 'active' : ''}`}
-              onClick={() => setTab('git')}
-              disabled={!deployed}
-            >
-              Git管理
-            </button>
-          </div>
-          <div className="meta">
-            <span className="version">本地版本: {version || '-'}</span>
-          </div>
-        </div>
-      </header>
+      <div className="main-tab-bar">
+        <button
+          className={`main-tab ${mainTab === 'main' ? 'active' : ''}`}
+          onClick={() => setMainTab('main')}
+        >
+          主界面
+        </button>
+        <button
+          className={`main-tab ${mainTab === 'version' ? 'active' : ''}`}
+          onClick={() => setMainTab('version')}
+        >
+          版本管理
+        </button>
+        <button
+          className={`main-tab ${mainTab === 'website' ? 'active' : ''}`}
+          onClick={() => setMainTab('website')}
+        >
+          官网
+        </button>
+      </div>
 
-      <main className="main">
-        {tab === 'launcher' ? (
+      <main className="main" style={mainTab === 'website' ? { padding: 0, gap: 0 } : undefined}>
+        {mainTab === 'main' ? (
           <>
             <div className="toolbar">
-              <button
-                className="btn warn"
-                onClick={handleUpdateButtonClick}
-                disabled={checkingUpdate || updating || launching || preparing}
-              >
-                {getUpdateButtonText()}
-              </button>
-              <button
-                className="btn"
-                onClick={handlePrepareEnvironment}
-                disabled={preparing || launching || updating}
-              >
-                {preparing ? '准备中...' : '准备环境'}
-              </button>
-              <button
-                className="btn primary"
-                onClick={handleDownloadLaunch}
-                disabled={mainRunning || launching || preparing || !deployed}
-                title={mainRunning ? '主程序正在运行中' : !deployed ? '请先下载项目' : ''}
-              >
-                {mainRunning ? '运行中' : launching ? '下载启动中...' : '下载启动'}
-              </button>
-              <button
-                className={`btn ${copied ? 'success' : ''}`}
-                onClick={handleCopyLogs}
-                disabled={copied}
-              >
-                {copied ? '复制成功' : '复制日志'}
-              </button>
+              <div className="toolbar-left">
+                <button
+                  className="btn warn"
+                  onClick={handleUpdateButtonClick}
+                  disabled={checkingUpdate || updating || launching || preparing}
+                >
+                  {getUpdateButtonText()}
+                </button>
+                <button
+                  className="btn"
+                  onClick={handlePrepareEnvironment}
+                  disabled={preparing || launching || updating}
+                >
+                  {preparing ? '准备中...' : '准备环境'}
+                </button>
+                <button
+                  className="btn primary"
+                  onClick={handleDownloadLaunch}
+                  disabled={mainRunning || launching || preparing || !deployed}
+                  title={mainRunning ? '主程序正在运行中' : !deployed ? '请先下载项目' : ''}
+                >
+                  {mainRunning ? '运行中' : launching ? '下载启动中...' : '下载启动'}
+                </button>
+                <button
+                  className={`btn ${copied ? 'success' : ''}`}
+                  onClick={handleCopyLogs}
+                  disabled={copied}
+                >
+                  {copied ? '复制成功' : '复制日志'}
+                </button>
+              </div>
+              <div className="toolbar-right">
+                <div className="meta">
+                  <span className="version">本地版本: {version || '-'}</span>
+                </div>
+              </div>
             </div>
+
+
 
             {launching && (
               <div className="launch-phase" style={{ color: theme.accent }}>
@@ -280,17 +286,24 @@ function App() {
                 </div>
               ))}
             </div>
-          </>
-        ) : (
-          <GitManager />
-        )}
 
-        {webviewTabs.length > 0 && (
-          <div className="webview-tabs-panel">
-            {webviewTabs.map((t) => (
-              <WebviewTab key={t.id} id={t.id} title={t.title} url={t.url} />
-            ))}
-          </div>
+          {webviewTabs.length > 0 && (
+            <div className="webview-tabs-panel">
+              {webviewTabs.map((t) => (
+                <WebviewTab key={t.id} id={t.id} title={t.title} url={t.url} />
+              ))}
+            </div>
+          )}
+          </>
+        ) : mainTab === 'version' ? (
+          <GitManager />
+        ) : (
+          <iframe
+            className="website-frame"
+            src="https://denghuominghui.cn/"
+            title="官网"
+            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+          />
         )}
       </main>
     </div>

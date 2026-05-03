@@ -416,57 +416,158 @@ func CheckUpdateStatus(cfg *Config, logger Logger) (*UpdateStatus, error) {
 	return status, nil
 }
 
-func createTrackingBranches(repo *git.Repository, logger Logger) error {
-	refs, err := repo.References()
+// syncBranches 用已打开的 repo 同步远程分支：
+//   - 远程新分支 → 自动创建本地跟踪分支
+//   - 远程已删除的分支 → 删除对应的本地分支（当前分支除外）
+func syncBranches(repo *git.Repository, logger Logger) {
+	head, err := repo.Head()
 	if err != nil {
-		return err
+		logger.Logf("[syncBranches] 获取 HEAD 失败: %v", err)
+		return
 	}
-	defer refs.Close()
+	currentBranch := head.Name().Short()
+	logger.Logf("[syncBranches] 当前分支: %s", currentBranch)
 
+	// 收集所有远程分支名（去掉 origin/ 前缀）
+	remoteBranches := make(map[string]plumbing.Hash)
+	rIter, err := repo.References()
+	if err != nil {
+		logger.Logf("[syncBranches] 遍历引用失败: %v", err)
+		return
+	}
+	defer rIter.Close()
 	for {
-		ref, err := refs.Next()
+		ref, err := rIter.Next()
 		if err != nil {
 			break
 		}
 		if ref.Type() != plumbing.HashReference || !ref.Name().IsRemote() {
 			continue
 		}
-
-		remoteBranch := ref.Name().Short()
-		parts := strings.SplitN(remoteBranch, "/", 2)
-		if len(parts) < 2 {
-			continue
+		remoteShort := ref.Name().Short()
+		localName := remoteShort
+		if idx := strings.Index(remoteShort, "/"); idx >= 0 {
+			localName = remoteShort[idx+1:]
 		}
+		logger.Logf("[syncBranches] 发现远程跟踪引用: %s -> 本地分支名: %s hash: %s", remoteShort, localName, ref.Hash().String()[:7])
+		remoteBranches[localName] = ref.Hash()
+	}
+	logger.Logf("[syncBranches] 共发现 %d 个远程跟踪引用", len(remoteBranches))
 
-		localName := parts[1]
-		if localName == "HEAD" {
-			continue
+	// 遍历本地分支，做双向同步
+	bIter, err := repo.Branches()
+	if err != nil {
+		logger.Logf("[syncBranches] 遍历分支失败: %v", err)
+		return
+	}
+	defer bIter.Close()
+
+	for {
+		ref, err := bIter.Next()
+		if err != nil {
+			break
 		}
+		localName := ref.Name().Short()
+		localHash := ref.Hash().String()[:7]
 
+		remoteHash, existsOnRemote := remoteBranches[localName]
+		if existsOnRemote {
+			remoteHashShort := remoteHash.String()[:7]
+			// 远程存在且本地指向不同 commit → 更新本地指向
+			if ref.Hash() != remoteHash {
+				logger.Logf("[syncBranches] 更新本地分支 %s: %s -> %s", localName, localHash, remoteHashShort)
+				localRef := plumbing.NewBranchReferenceName(localName)
+				newRef := plumbing.NewHashReference(localRef, remoteHash)
+				if err := repo.Storer.SetReference(newRef); err != nil {
+					logger.Logf("[syncBranches] 更新分支 %s 失败: %v", localName, err)
+				}
+			} else {
+				logger.Logf("[syncBranches] 本地分支 %s 已是最新: %s", localName, localHash)
+			}
+			delete(remoteBranches, localName)
+		} else {
+			// 远程已删除该分支，删除本地分支（当前分支除外）
+			if localName != currentBranch {
+				logger.Logf("[syncBranches] 删除本地分支: %s (%s) - 远程已删除", localName, localHash)
+				localRef := plumbing.NewBranchReferenceName(localName)
+				err1 := repo.Storer.RemoveReference(localRef)
+				err2 := repo.DeleteBranch(localName)
+				if err1 != nil {
+					logger.Logf("[syncBranches] 删除引用 %s 失败: %v", localName, err1)
+				}
+				if err2 != nil {
+					logger.Logf("[syncBranches] 删除分支 %s 失败: %v", localName, err2)
+				}
+			} else {
+				logger.Logf("[syncBranches] 跳过当前分支 %s（远程已删除但保留本地）", localName)
+			}
+		}
+	}
+
+	// 剩余在 remoteBranches 中的是远程有但本地没有的分支 → 创建本地跟踪分支
+	logger.Logf("[syncBranches] 剩余 %d 个远程分支需要创建本地跟踪", len(remoteBranches))
+	for localName, hash := range remoteBranches {
+		logger.Logf("[syncBranches] 创建本地跟踪分支: %s -> %s", localName, hash.String()[:7])
 		localRef := plumbing.NewBranchReferenceName(localName)
-		_, err = repo.Reference(localRef, false)
-		if err == nil {
-			continue
-		}
-
-		newRef := plumbing.NewHashReference(localRef, ref.Hash())
+		newRef := plumbing.NewHashReference(localRef, hash)
 		if err := repo.Storer.SetReference(newRef); err != nil {
-			logger.Logf("创建本地分支 %s 失败: %v", localName, err)
+			logger.Logf("[syncBranches] 创建分支引用 %s 失败: %v", localName, err)
 			continue
 		}
-
 		if err := repo.CreateBranch(&config.Branch{
 			Name:   localName,
-			Remote: parts[0],
+			Remote: "origin",
 			Merge:  localRef,
 		}); err != nil {
-			logger.Logf("配置分支 %s 跟踪失败: %v", localName, err)
+			logger.Logf("[syncBranches] 配置跟踪分支 %s 失败: %v", localName, err)
 		}
-
-		logger.Logf("创建本地分支: %s", localName)
 	}
-	logger.Logf("本地跟踪分支创建完成")
-	return nil
+	logger.Logf("[syncBranches] 分支同步完成")
+}
+
+// SyncBranchesFromRemot
+func SyncBranchesFromRemote(cfg *Config, logger Logger) {
+	projectDir := GetProjectDir(cfg)
+	if _, err := os.Stat(filepath.Join(projectDir, ".git")); os.IsNotExist(err) {
+		logger.Logf("项目未部署，跳过分支同步")
+		return
+	}
+	repo, err := git.PlainOpen(projectDir)
+	if err != nil {
+		logger.Logf("打开仓库失败，跳过分支同步: %v", err)
+		return
+	}
+	w, err := repo.Worktree()
+	if err != nil {
+		logger.Logf("获取工作区失败: %v", err)
+		return
+	}
+	err = repo.Fetch(&git.FetchOptions{
+		RemoteName: "origin",
+		Prune:      true,
+		Progress:   &logWriter{logger: logger},
+	})
+	if err == git.NoErrAlreadyUpToDate {
+		logger.Logf("远程已是最新")
+	} else if err != nil {
+		logger.Logf("fetch 远程失败: %v", err)
+		return
+	}
+	// 强行 hard reset 当前分支到远程最新
+	head, err := repo.Head()
+	if err == nil && head.Name().IsBranch() {
+		branchName := head.Name().Short()
+		refName := plumbing.NewRemoteReferenceName("origin", branchName)
+		ref, err := repo.Reference(refName, true)
+		if err == nil {
+			_ = w.Reset(&git.ResetOptions{
+				Mode:   git.HardReset,
+				Commit: ref.Hash(),
+			})
+			logger.Logf("强制重置 %s 到远程最新: %s", branchName, ref.Hash().String()[:7])
+		}
+	}
+	syncBranches(repo, logger)
 }
 
 // PullUpdates 根据项目目录是否存在，执行克隆或拉取更新
@@ -490,10 +591,15 @@ func PullUpdates(cfg *Config, logger Logger) error {
 	}
 	err = repo.Fetch(&git.FetchOptions{
 		RemoteName: "origin",
+		Prune:      true,
 		Progress:   &logWriter{logger: logger},
 	})
-	if err != nil && err != git.NoErrAlreadyUpToDate {
+	if err == git.NoErrAlreadyUpToDate {
+		logger.Logf("远程已是最新（NoErrAlreadyUpToDate），继续同步分支")
+	} else if err != nil {
 		return fmt.Errorf("获取远程更新失败: %w", err)
+	} else {
+		logger.Logf("远程 fetch 成功（Prune=true），已清理已删除分支的远程跟踪引用")
 	}
 	head, err := repo.Head()
 	if err != nil {
@@ -515,9 +621,7 @@ func PullUpdates(cfg *Config, logger Logger) error {
 		}
 	}
 	logger.Logf("正在同步本地跟踪分支...")
-	if err := createTrackingBranches(repo, logger); err != nil {
-		logger.Logf("同步跟踪分支失败: %v", err)
-	}
+	syncBranches(repo, logger)
 
 	logger.Logf("更新完成")
 	if err := EnsureRipgrep(projectDir); err != nil {
@@ -538,6 +642,16 @@ func cloneProject(cfg *Config, logger Logger) error {
 	}
 
 	logger.Logf("项目克隆完成")
+
+	// 克隆后打开仓库，同步远程分支
+	repo, err := git.PlainOpen(projectDir)
+	if err != nil {
+		logger.Logf("打开仓库失败: %v", err)
+	} else {
+		logger.Logf("正在同步远程分支...")
+		syncBranches(repo, logger)
+	}
+
 	logger.Logf("接下来点击「准备环境」按钮，将会检测系统环境，下载需要的安装包/便携包")
 	return nil
 }

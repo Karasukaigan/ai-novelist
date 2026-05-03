@@ -3,6 +3,7 @@ package gitman
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v6"
@@ -73,7 +74,114 @@ func GetCommitHistory(projectDir string, limit int) ([]CommitDetail, error) {
 	return commits, nil
 }
 
-// GetBranches 获取本地与远程分支列表
+// FetchRemote 从远程获取最新引用（prune 会清理已删除的远程跟踪引用）
+func FetchRemote(projectDir string) error {
+	repo, err := git.PlainOpen(projectDir)
+	if err != nil {
+		return fmt.Errorf("打开仓库失败: %w", err)
+	}
+
+	err = repo.Fetch(&git.FetchOptions{
+		RemoteName: "origin",
+		Prune:      true, // 清理远程已删除的分支的本地跟踪引用
+	})
+	if err != nil && err != git.NoErrAlreadyUpToDate {
+		return fmt.Errorf("获取远程引用失败: %w", err)
+	}
+	return nil
+}
+
+// SyncRemoteBranches 同步远程分支到本地：
+//   - 远程新分支 → 自动创建本地跟踪分支
+//   - 远程已删除的分支 → 删除对应的本地分支（当前分支除外）
+func SyncRemoteBranches(projectDir string) error {
+	repo, err := git.PlainOpen(projectDir)
+	if err != nil {
+		return fmt.Errorf("打开仓库失败: %w", err)
+	}
+
+	head, err := repo.Head()
+	if err != nil {
+		return fmt.Errorf("获取 HEAD 失败: %w", err)
+	}
+	currentBranch := head.Name().Short()
+
+	// 收集所有远程分支名（去掉 origin/ 前缀）
+	remoteBranches := make(map[string]plumbing.Hash)
+	rIter, err := repo.References()
+	if err != nil {
+		return err
+	}
+	defer rIter.Close()
+	for {
+		ref, err := rIter.Next()
+		if err != nil {
+			break
+		}
+		if ref.Type() != plumbing.HashReference || !ref.Name().IsRemote() {
+			continue
+		}
+		remoteShort := ref.Name().Short() // e.g. "origin/main"
+		localName := remoteShort
+		if idx := strings.Index(remoteShort, "/"); idx >= 0 {
+			localName = remoteShort[idx+1:]
+		}
+		remoteBranches[localName] = ref.Hash()
+	}
+
+	// 遍历本地分支，做双向同步
+	bIter, err := repo.Branches()
+	if err != nil {
+		return err
+	}
+	defer bIter.Close()
+
+	for {
+		ref, err := bIter.Next()
+		if err != nil {
+			break
+		}
+		localName := ref.Name().Short()
+
+		remoteHash, existsOnRemote := remoteBranches[localName]
+		if existsOnRemote {
+			// 远程存在但本地没有该分支引用 → 已在上面的 remoteBranches 遍历中处理
+			// 这里只需要处理：远程存在且本地也有，但本地指向不同 commit → 更新本地指向
+			if ref.Hash() != remoteHash {
+				localRef := plumbing.NewBranchReferenceName(localName)
+				newRef := plumbing.NewHashReference(localRef, remoteHash)
+				_ = repo.Storer.SetReference(newRef)
+			}
+			// 从 map 中移除已处理的分支
+			delete(remoteBranches, localName)
+		} else {
+			// 远程已删除该分支，删除本地分支（当前分支除外）
+			if localName != currentBranch {
+				localRef := plumbing.NewBranchReferenceName(localName)
+				_ = repo.Storer.RemoveReference(localRef)
+				_ = repo.DeleteBranch(localName)
+			}
+		}
+	}
+
+	// 剩余在 remoteBranches 中的是远程有但本地完全没有的分支 → 创建本地跟踪分支
+	for localName, hash := range remoteBranches {
+		localRef := plumbing.NewBranchReferenceName(localName)
+		newRef := plumbing.NewHashReference(localRef, hash)
+		if err := repo.Storer.SetReference(newRef); err != nil {
+			continue
+		}
+		_ = repo.CreateBranch(&config.Branch{
+			Name:   localName,
+			Remote: "origin",
+			Merge:  localRef,
+		})
+	}
+
+	return nil
+}
+
+// GetBranches 获取本地分支列表（仅读取本地仓库，不请求远程）
 func GetBranches(projectDir string) ([]BranchInfo, error) {
 	repo, err := git.PlainOpen(projectDir)
 	if err != nil {
@@ -87,7 +195,6 @@ func GetBranches(projectDir string) ([]BranchInfo, error) {
 
 	var branches []BranchInfo
 
-	// 本地分支
 	iter, err := repo.Branches()
 	if err != nil {
 		return nil, err
@@ -105,28 +212,6 @@ func GetBranches(projectDir string) ([]BranchInfo, error) {
 			IsCurrent: head.Name().String() == ref.Name().String(),
 			SHA:       ref.Hash().String(),
 		})
-	}
-
-	// 远程分支
-	remIter, err := repo.References()
-	if err != nil {
-		return nil, err
-	}
-	defer remIter.Close()
-
-	for {
-		ref, err := remIter.Next()
-		if err != nil {
-			break
-		}
-		if ref.Type() == plumbing.HashReference && ref.Name().IsRemote() {
-			branches = append(branches, BranchInfo{
-				Name:      ref.Name().Short(),
-				IsRemote:  true,
-				IsCurrent: false,
-				SHA:       ref.Hash().String(),
-			})
-		}
 	}
 
 	return branches, nil
@@ -156,6 +241,7 @@ func CheckoutCommit(projectDir string, hash string) error {
 }
 
 // SwitchBranch 切换到已有分支；若本地不存在但远程存在，则自动创建本地跟踪分支
+// name 可以是 "main"（本地分支名）或 "origin/main"（远程分支名）
 func SwitchBranch(projectDir string, name string) error {
 	repo, err := git.PlainOpen(projectDir)
 	if err != nil {
@@ -167,25 +253,32 @@ func SwitchBranch(projectDir string, name string) error {
 		return fmt.Errorf("获取工作区失败: %w", err)
 	}
 
-	localRef := plumbing.NewBranchReferenceName(name)
+	// 解析分支名：如果是 origin/xxx 格式，提取 xxx
+	localName := name
+	remoteName := "origin"
+	if strings.HasPrefix(name, "origin/") {
+		localName = name[len("origin/"):]
+	}
+
+	localRef := plumbing.NewBranchReferenceName(localName)
 	_, err = repo.Reference(localRef, false)
 	if err != nil {
 		// 本地没有该分支，尝试从远程创建
-		remoteName := "origin"
-		remoteRefName := plumbing.NewRemoteReferenceName(remoteName, name)
+		remoteRefName := plumbing.NewRemoteReferenceName(remoteName, localName)
 		remoteRef, err := repo.Reference(remoteRefName, false)
 		if err != nil {
 			return fmt.Errorf("分支 %s 不存在（本地及远程）: %w", name, err)
 		}
 
-		// 创建本地分支引用
+		// 创建本地分支引用指向远程的 commit
 		newRef := plumbing.NewHashReference(localRef, remoteRef.Hash())
 		if err := repo.Storer.SetReference(newRef); err != nil {
 			return fmt.Errorf("创建本地分支引用失败: %w", err)
 		}
 
+		// 配置跟踪分支关系
 		if err := repo.CreateBranch(&config.Branch{
-			Name:   name,
+			Name:   localName,
 			Remote: remoteName,
 			Merge:  localRef,
 		}); err != nil {
