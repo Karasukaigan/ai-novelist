@@ -28,6 +28,11 @@ os.environ["LITELLM_LOG"] = "ERROR"
 
 import logging
 
+# 强制 stdout/stderr 使用 UTF-8 编码，避免 Windows 下 GBK 编码导致日志乱码
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+
 # 先初始化数据目录和文件（必须在导入 settings 之前）
 from backend.settings.initializer import initialize_directories_and_files
 initialize_directories_and_files()
