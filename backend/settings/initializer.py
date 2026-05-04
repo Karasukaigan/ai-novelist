@@ -81,7 +81,8 @@ def initialize_directories_and_files():
     2. 确保 .env 文件存在
     3. 初始化 Git 仓库
     """
-    data_dir = Path(settings.DATA_DIR)
+    base_dir = Path(settings.DATA_DIR)
+    config_dir = Path(settings.CONFIG_DIR)
     chromadb_dir = Path(settings.CHROMADB_PERSIST_DIR)
     db_dir = Path(settings.DB_DIR)
     uploads_dir = Path(settings.UPLOADS_DIR)
