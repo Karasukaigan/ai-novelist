@@ -7,9 +7,11 @@ export function AutoCheckUpdate():Promise<void>;
 
 export function CheckUpdate():Promise<updater.UpdateStatus>;
 
-export function GetLogs():Promise<string>;
+export function DownloadLaunch():Promise<void>;
 
-export function GetMirror():Promise<string>;
+export function GetGitServerAddress():Promise<string>;
+
+export function GetLogs():Promise<string>;
 
 export function GetVersion():Promise<string>;
 
@@ -19,22 +21,30 @@ export function GitCheckout(arg1:string):Promise<void>;
 
 export function GitCreateBranch(arg1:string):Promise<void>;
 
+export function GitFullGraph(arg1:number):Promise<Array<gitman.CommitDetail>>;
+
 export function GitHistory(arg1:number):Promise<Array<gitman.CommitDetail>>;
 
 export function GitSwitchBranch(arg1:string):Promise<void>;
 
 export function IsMainProgramRunning():Promise<boolean>;
 
-export function KillMainProgram():Promise<void>;
+export function IsProjectDeployed():Promise<boolean>;
 
-export function LaunchMainProgram():Promise<void>;
+export function KillMainProgram():Promise<void>;
 
 export function LoadConfig():Promise<updater.Config>;
 
 export function Logf(arg1:string,arg2:Array<any>):Promise<void>;
 
+export function OpenWebviewTab(arg1:string,arg2:string):Promise<void>;
+
 export function PerformUpdate():Promise<void>;
+
+export function PrepareEnvironment():Promise<void>;
 
 export function Progress(arg1:number):Promise<void>;
 
-export function SetMirror(arg1:string):Promise<void>;
+export function StartGitServer():Promise<void>;
+
+export function StopGitServer():Promise<void>;

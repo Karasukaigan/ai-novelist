@@ -106,5 +106,3 @@ async def get_working_diff(file_path: str):
     except Exception as e:
         logger.error(f"获取工作区差异失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-

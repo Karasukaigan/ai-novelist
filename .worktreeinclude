@@ -1,0 +1,7 @@
+# 这玩意怎么检测到也不生效啊，干脆自己写了一个脚本迁移
+frontend/node_modules/
+launcher/frontend/node_modules/
+.env
+bin/
+develop_note/
+.venv/

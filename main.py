@@ -6,11 +6,10 @@ from pathlib import Path
 def setup_portable_git():
     """检测并使用便携版 Git（便携 Python 模式）"""
     script_dir = Path(sys.argv[0]).parent.resolve()
-    git_exe = script_dir / 'bin' / 'PortableGit' / 'mingw64' / 'bin' / 'git.exe'
+    git_exe = script_dir / 'bin' / 'git' / 'bin' / 'git.exe'
     if git_exe.exists():
         os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = str(git_exe)
         os.environ['GIT_PYTHON_REFRESH'] = 'quiet'
-        # 同时添加到 PATH
         git_bin = git_exe.parent
         os.environ['PATH'] = str(git_bin) + os.pathsep + os.environ.get('PATH', '')
         return True
@@ -27,6 +26,11 @@ if str(script_dir) not in sys.path:
 os.environ["LITELLM_LOG"] = "ERROR"
 
 import logging
+
+# 强制 stdout/stderr 使用 UTF-8 编码，避免 Windows 下 GBK 编码导致日志乱码
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
 
 # 先初始化数据目录和文件（必须在导入 settings 之前）
 from backend.settings.initializer import initialize_directories_and_files

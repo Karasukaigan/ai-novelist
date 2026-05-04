@@ -29,25 +29,25 @@ def _ensure_data_subdirs(data_dir: Path):
 def _initialize_git(base_dir: Path):
     """初始化Git仓库和相关配置文件"""
     try:
-        
+
         git_dir = base_dir / ".git"
-        
+
         # 如果Git仓库已存在，跳过初始化
         if git_dir.exists():
             logger.info("Git仓库已存在，跳过初始化")
             return
-        
+
         logger.info(f"正在初始化Git仓库: {base_dir}")
-        
+
         # 初始化Git仓库
         repo = Repo.init(base_dir)
-        
+
         # 配置Git用户信息
         with repo.config_writer() as config:
             config.set_value("user", "name", "AI Novelist")
             config.set_value("user", "email", "noreply@ai-novelist.local")
             config.set_value("commit", "gpgSign", "false")
-        
+
         # 第一步：创建完全空的初始提交（使用 git commit --allow-empty）
         repo.git.commit(
             "--allow-empty",
@@ -55,7 +55,7 @@ def _initialize_git(base_dir: Path):
             "--date", time.strftime("%Y-%m-%dT%H:%M:%S"),
         )
         logger.info("创建空初始提交")
-        
+
         # 第二步：添加所有文件并提交（这是第一个有意义的存档点，有父提交可对比）
         # 使用 git add -A 来遵守 .gitignore 规则
         repo.git.add("-A")
@@ -65,9 +65,9 @@ def _initialize_git(base_dir: Path):
             commit_date=time.strftime("%Y-%m-%dT%H:%M:%S"),
         )
         logger.info("创建初始存档点")
-        
+
         logger.info("Git仓库初始化成功")
-        
+
     except ImportError:
         logger.warning("GitPython未安装，跳过Git仓库初始化")
     except Exception as e:
@@ -88,19 +88,16 @@ def initialize_directories_and_files():
     temp_dir = Path(settings.TEMP_DIR)
     skills_dir = Path(settings.SKILLS_DIR)
     env_file = settings.ENV_FILE_PATH
-    
-    # 1. 确保 data 下所有一级目录存在
-    _ensure_data_subdirs(data_dir)
-    
-    # 2. 确保其他必要的目录存在（env 文件的父目录等）
-    directories = [chromadb_dir, db_dir, uploads_dir, temp_dir, skills_dir, env_file.parent]
+
+    # 确保所有目录存在
+    directories = [base_dir, config_dir, chromadb_dir, db_dir, uploads_dir, temp_dir, skills_dir, env_file.parent]
     for directory in directories:
         os.makedirs(directory, exist_ok=True)
-    
-    # 3. 确保 .env 文件存在，不存在则创建空文件
+
+    # 确保 .env 文件存在，不存在则创建空文件
     if not env_file.exists():
         env_file.write_text("", encoding='utf-8')
         logger.info(f"创建 .env 文件: {env_file}")
-    
-    # 4. 初始化Git仓库和相关配置文件
-    _initialize_git(data_dir)
+
+    # 初始化Git仓库和相关配置文件
+    _initialize_git(base_dir)

@@ -12,7 +12,6 @@ frontend/node_modules/
 # Build artifacts
 dist/
 frontend/build/
-build/
 frontend/electron-dist
 # IDE and Editor files
 .idea/
@@ -132,6 +131,8 @@ test-results/
 playwright-report/
 
 launcher/frontend/node_modules/
+launcher/*.exe
+*.exe
 
 # Data directory (user data, not version controlled)
 data/

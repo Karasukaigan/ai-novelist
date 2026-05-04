@@ -41,7 +41,6 @@ class WindowManager {
     // 加载页面
     if (isDev) {
       this.mainWindow.loadURL('http://localhost:3000');
-      this.mainWindow.webContents.openDevTools();
     } else {
       this.mainWindow.loadFile(APP_CONFIG.paths.indexHtml);
     }
@@ -52,6 +51,13 @@ class WindowManager {
         terminalManager.killAllTerminals();
       });
       this.mainWindow = null;
+    });
+
+    // 注册快捷键：F12 切换 DevTools（仅当窗口聚焦时生效）
+    this.mainWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F12') {
+        this.mainWindow.webContents.toggleDevTools();
+      }
     });
 
     return this.mainWindow;

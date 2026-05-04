@@ -15,8 +15,6 @@ var assets embed.FS
 func main() {
 	app := NewApp()
 
-	// 先加载配置以获取标题和版本
-	config, _ := app.LoadConfig()
 	err := wails.Run(&options.App{
 		Title:     "白荼",
 		Width:     900,
@@ -28,11 +26,7 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 18, G: 18, B: 24, A: 1},
 		OnStartup:        app.startup,
-		OnDomReady: func(ctx context.Context) {
-			if config != nil {
-				app.AutoCheckUpdate()
-			}
-		},
+		OnDomReady:       func(ctx context.Context) {},
 		Bind: []interface{}{
 			app,
 		},

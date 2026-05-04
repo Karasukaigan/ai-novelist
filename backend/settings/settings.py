@@ -41,10 +41,10 @@ class Settings:
         self.SKILLS_DIR: str = str(Path(self.DATA_DIR) / "skills")
         
         # 可执行文件路径
-        self.UVX_EXECUTABLE: str = self._get_executable('uvx.exe')
         self.NODE_EXECUTABLE: str = self._get_executable('node.exe')
         self.NPM_EXECUTABLE: str = self._get_executable('npm.cmd')
         self.RG_EXECUTABLE: str = self._get_executable('rg.exe')
+        self.GIT_EXECUTABLE: str = self._get_executable('git.exe')
         
         # 初始化环境变量管理器
         self.env_manager = EnvManager(self.ENV_FILE_PATH)
@@ -64,12 +64,24 @@ class Settings:
             str: 可执行文件的完整路径或系统命令名
         """
         bin_dir = get_bin_dir()
+        # Node.js 解压到 bin/node/ 子目录下
+        if exe_name in ('node.exe', 'npm.cmd', 'npx.cmd'):
+            exe_path = bin_dir / 'node' / exe_name
+            if exe_path.exists():
+                logger.info(f"使用项目自带的 {exe_name}: {exe_path}")
+                return str(exe_path)
+        # Git 解压到 bin/git/bin/ 子目录下
+        if exe_name == 'git.exe':
+            exe_path = bin_dir / 'git' / 'bin' / exe_name
+            if exe_path.exists():
+                logger.info(f"使用项目自带的 {exe_name}: {exe_path}")
+                return str(exe_path)
         exe_path = bin_dir / exe_name
         if exe_path.exists():
             logger.info(f"使用项目自带的 {exe_name}: {exe_path}")
             return str(exe_path)
         # 如果项目自带的不存在，回退到系统命令
-        cmd_name = exe_name.replace('.exe', '')
+        cmd_name = exe_name.replace('.exe', '').replace('.cmd', '')
         logger.info(f"使用系统 {cmd_name}")
         return cmd_name
         

@@ -15,7 +15,7 @@ const ContextMenu = ({
   const menuRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState(-1);
 
-  // 根据实际菜单项数量计算菜单总高度（每项 1vh）
+  // 根据实际菜单项数量计算菜单总高度（每项 2vh）
   const menuHeightVh = useMemo(() => {
     return items.length * 2;
   }, [items]);
@@ -130,7 +130,7 @@ const ContextMenu = ({
           onClick={() => handleItemClick(item)}
           disabled={item.disabled}
           className={`
-            w-full h-[2vh] px-4 text-left text-sm transition-colors
+            w-full h-[2vh] px-4 text-left text-[1.2vh] transition-colors
             ${item.disabled
               ? 'text-theme-gray4 cursor-not-allowed'
               : selectedIndex === index

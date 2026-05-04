@@ -4,31 +4,34 @@ import { useDispatch, useSelector } from 'react-redux';
 import type { RootState } from './store/store';
 import {
   addLog,
+  setLogs,
   setCopied,
   setMainRunning,
   setProgress,
   setUpdateStatus,
+  setCheckingUpdate,
   setUpdating,
   setVersion,
   setLaunching,
   setLaunchPhase,
-  setMirror,
   resetProgress,
+  addWebviewTab,
 } from './store/launcher';
 import { useTheme } from './context/ThemeContext';
 import {
   CheckUpdate,
   GetLogs,
-  GetMirror,
   GetVersion,
   IsMainProgramRunning,
-  LaunchMainProgram,
+  IsProjectDeployed,
+  PrepareEnvironment,
+  DownloadLaunch,
   LoadConfig,
   PerformUpdate,
-  SetMirror,
 } from '../wailsjs/go/main/App';
 import { EventsOn } from '../wailsjs/runtime';
 import GitManager from './components/GitManager';
+import WebviewTab from './components/WebviewTab';
 
 function App() {
   const dispatch = useDispatch();
@@ -36,23 +39,24 @@ function App() {
     logs,
     version,
     updateStatus,
+    checkingUpdate,
     updating,
     progress,
     copied,
     mainRunning,
     launching,
     launchPhase,
-    mirror,
+    webviewTabs,
   } = useSelector((state: RootState) => state.launcherSlice);
 
   const { theme } = useTheme();
   const logRef = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useState<'launcher' | 'git'>('launcher');
+  const [mainTab, setMainTab] = useState<'main' | 'version' | 'website'>('main');
+  const [deployed, setDeployed] = useState<boolean>(false);
+  const [preparing, setPreparing] = useState(false);
 
   const refreshStatus = async () => {
     try {
-      const status = await CheckUpdate();
-      dispatch(setUpdateStatus(status));
       const v = await GetVersion();
       dispatch(setVersion(v));
     } catch {
@@ -62,9 +66,16 @@ function App() {
 
   useEffect(() => {
     LoadConfig().then(() => {
-      refreshStatus();
+      IsProjectDeployed().then((d: boolean) => {
+        setDeployed(d);
+        if (!d) {
+          dispatch(setLogs([
+            '初次部署项目，请点击「下载项目」按钮\n',
+          ]));
+        }
+        refreshStatus();
+      });
       IsMainProgramRunning().then((running: boolean) => dispatch(setMainRunning(running)));
-      GetMirror().then((m: string) => dispatch(setMirror(m)));
     });
 
     const offLog = EventsOn('log', (data: string) => {
@@ -83,10 +94,19 @@ function App() {
       }
     });
 
+    const offWebview = EventsOn('open-webview-tab', (data: { title: string; url: string }) => {
+      dispatch(addWebviewTab({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        title: data.title,
+        url: data.url,
+      }));
+    });
+
     return () => {
       offLog?.();
       offProgress?.();
       offMainState?.();
+      offWebview?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -97,12 +117,26 @@ function App() {
     }
   }, [logs]);
 
+  const handleCheckUpdate = async () => {
+    if (checkingUpdate) return;
+    dispatch(setCheckingUpdate(true));
+    try {
+      const status = await CheckUpdate();
+      dispatch(setUpdateStatus(status));
+    } catch {
+      dispatch(setUpdateStatus(null));
+    } finally {
+      dispatch(setCheckingUpdate(false));
+    }
+  };
+
   const handleUpdate = async () => {
-    if (!updateStatus?.has_update) return;
     dispatch(setUpdating(true));
     try {
       await PerformUpdate();
+      setDeployed(true);
       await refreshStatus();
+      dispatch(setUpdateStatus(null));
       dispatch(resetProgress());
     } catch {
       dispatch(resetProgress());
@@ -111,23 +145,28 @@ function App() {
     }
   };
 
-  const handleLaunch = async () => {
-    dispatch(setLaunching(true));
-    dispatch(setLaunchPhase('准备启动...'));
+  const handlePrepareEnvironment = async () => {
+    setPreparing(true);
     try {
-      await LaunchMainProgram();
-    } catch {
-      dispatch(setLaunching(false));
-      dispatch(setLaunchPhase(''));
+      await PrepareEnvironment();
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      dispatch(addLog(`环境准备失败: ${msg}\n`));
+    } finally {
+      setPreparing(false);
     }
   };
 
-  const handleSetMirror = async (m: string) => {
+  const handleDownloadLaunch = async () => {
+    dispatch(setLaunching(true));
+    dispatch(setLaunchPhase('下载依赖并启动...'));
     try {
-      await SetMirror(m);
-      dispatch(setMirror(m));
-    } catch {
-      // ignore
+      await DownloadLaunch();
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      dispatch(addLog(`启动失败: ${msg}\n`));
+      dispatch(setLaunching(false));
+      dispatch(setLaunchPhase(''));
     }
   };
 
@@ -138,118 +177,133 @@ function App() {
     setTimeout(() => dispatch(setCopied(false)), 1500);
   };
 
-  const hasUpdate = updateStatus?.has_update ?? false;
-  const remoteMsg = updateStatus?.remote_commit?.message ?? '';
-  const remoteSha = updateStatus?.remote_commit?.sha ?? '';
-  const localSha = updateStatus?.local_commit?.sha ?? '';
+  const getUpdateButtonText = () => {
+    if (checkingUpdate) return '检查中...';
+    if (updating) return '更新中...';
+    if (!deployed) return '下载项目';
+    if (updateStatus?.has_update) return '下载更新';
+    if (updateStatus !== null) return '已是最新';
+    return '检查更新';
+  };
+
+  const handleUpdateButtonClick = () => {
+    if (!deployed) {
+      handleUpdate();
+      return;
+    }
+    if (updateStatus?.has_update) {
+      handleUpdate();
+    } else {
+      handleCheckUpdate();
+    }
+  };
 
   return (
     <div className="app" style={{ background: theme.black, color: theme.white }}>
-      <header className="header">
-        <h1>青烛启动器</h1>
-        <div className="header-right">
-          <div className="tabs">
-            <button
-              className={`tab-btn ${tab === 'launcher' ? 'active' : ''}`}
-              onClick={() => setTab('launcher')}
-            >
-              启动器
-            </button>
-            <button
-              className={`tab-btn ${tab === 'git' ? 'active' : ''}`}
-              onClick={() => setTab('git')}
-            >
-              Git管理
-            </button>
-          </div>
-          <div className="meta">
-            <span className="version">本地版本: {version || '-'}</span>
-          </div>
-        </div>
-      </header>
+      <div className="main-tab-bar">
+        <button
+          className={`main-tab ${mainTab === 'main' ? 'active' : ''}`}
+          onClick={() => setMainTab('main')}
+        >
+          主界面
+        </button>
+        <button
+          className={`main-tab ${mainTab === 'version' ? 'active' : ''}`}
+          onClick={() => setMainTab('version')}
+        >
+          版本管理
+        </button>
+        <button
+          className={`main-tab ${mainTab === 'website' ? 'active' : ''}`}
+          onClick={() => setMainTab('website')}
+        >
+          官网
+        </button>
+      </div>
 
-      <main className="main">
-        {tab === 'launcher' ? (
+      <main className="main" style={mainTab === 'website' ? { padding: 0, gap: 0 } : undefined}>
+        {mainTab === 'main' ? (
           <>
-
-        <div className="toolbar">
-          <button
-            className="btn warn"
-            onClick={handleUpdate}
-            disabled={!hasUpdate || updating || launching}
-            title={!hasUpdate ? '当前已是最新提交' : ''}
-          >
-            {updating ? '更新中...' : hasUpdate ? '立即更新' : '已是最新提交'}
-          </button>
-          <button
-            className="btn primary"
-            onClick={handleLaunch}
-            disabled={mainRunning || launching}
-            title={mainRunning ? '主程序正在运行中' : ''}
-          >
-            {mainRunning ? '运行中' : launching ? '启动中...' : '启动程序'}
-          </button>
-          <button
-            className={`btn ${copied ? 'success' : ''}`}
-            onClick={handleCopyLogs}
-            disabled={copied}
-          >
-            {copied ? '复制成功' : '复制日志'}
-          </button>
-          <select
-            className="btn"
-            value={mirror}
-            onChange={(e) => handleSetMirror(e.target.value)}
-            title="选择镜像源"
-          >
-            <option value="tsinghua">清华源</option>
-            <option value="aliyun">阿里源</option>
-          </select>
-        </div>
-
-        {launching && (
-          <div className="launch-phase" style={{ color: theme.accent }}>
-            {launchPhase}
-          </div>
-        )}
-
-        {hasUpdate && (
-          <div className="update-info">
-            <div className="commit-row">
-              <span className="commit-label">远程提交:</span>
-              <span className="commit-sha">{remoteSha.slice(0, 7)}</span>
+            <div className="toolbar">
+              <div className="toolbar-left">
+                <button
+                  className="btn warn"
+                  onClick={handleUpdateButtonClick}
+                  disabled={checkingUpdate || updating || launching || preparing}
+                >
+                  {getUpdateButtonText()}
+                </button>
+                <button
+                  className="btn"
+                  onClick={handlePrepareEnvironment}
+                  disabled={preparing || launching || updating}
+                >
+                  {preparing ? '准备中...' : '准备环境'}
+                </button>
+                <button
+                  className="btn primary"
+                  onClick={handleDownloadLaunch}
+                  disabled={mainRunning || launching || preparing || !deployed}
+                  title={mainRunning ? '主程序正在运行中' : !deployed ? '请先下载项目' : ''}
+                >
+                  {mainRunning ? '运行中' : launching ? '下载启动中...' : '下载启动'}
+                </button>
+                <button
+                  className={`btn ${copied ? 'success' : ''}`}
+                  onClick={handleCopyLogs}
+                  disabled={copied}
+                >
+                  {copied ? '复制成功' : '复制日志'}
+                </button>
+              </div>
+              <div className="toolbar-right">
+                <div className="meta">
+                  <span className="version">本地版本: {version || '-'}</span>
+                </div>
+              </div>
             </div>
-            <div className="commit-msg">{remoteMsg}</div>
-            {localSha && (
-              <div className="commit-row">
-                <span className="commit-label">本地提交:</span>
-                <span className="commit-sha">{localSha.slice(0, 7)}</span>
+
+
+
+            {launching && (
+              <div className="launch-phase" style={{ color: theme.accent }}>
+                {launchPhase}
               </div>
             )}
-          </div>
-        )}
 
-        {progress > 0 && progress < 100 && (
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
-            <span className="progress-text">{progress}%</span>
-          </div>
-        )}
+            {progress > 0 && progress < 100 && (
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${progress}%` }} />
+                <span className="progress-text">{progress}%</span>
+              </div>
+            )}
 
-        <div className="log-box" ref={logRef}>
-          {logs.length === 0 && (
-            <div className="log-placeholder">等待日志输出...</div>
-          )}
-          {logs.map((line, idx) => (
-            <div key={idx} className="log-line">
-              <span className="log-prefix">{'>'}</span>
-              <span className="log-content">{line.replace(/\n$/, '')}</span>
+            <div className="log-box" ref={logRef}>
+              {logs.map((line, idx) => (
+                <div key={idx} className="log-line">
+                  <span className="log-prefix">{'>'}</span>
+                  <span className="log-content">{line.replace(/\n$/, '')}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+
+          {webviewTabs.length > 0 && (
+            <div className="webview-tabs-panel">
+              {webviewTabs.map((t) => (
+                <WebviewTab key={t.id} id={t.id} title={t.title} url={t.url} />
+              ))}
+            </div>
+          )}
           </>
-        ) : (
+        ) : mainTab === 'version' ? (
           <GitManager />
+        ) : (
+          <iframe
+            className="website-frame"
+            src="https://denghuominghui.cn/"
+            title="官网"
+            sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+          />
         )}
       </main>
     </div>

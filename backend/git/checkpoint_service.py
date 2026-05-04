@@ -165,7 +165,7 @@ class CheckpointService:
 
             # 获取与父提交的差异（使用 raw 模式）
             parent_commit = parents[0]
-            diff = parent_commit.diff(commit) # 看起来父.diff(子)，才能计算出后者相较于前者的变更。
+            diff = parent_commit.diff(commit)
 
             changes = []
             seen_paths = set()
@@ -179,9 +179,9 @@ class CheckpointService:
                     file_path = item.b_path if item.b_path else item.a_path
 
                 # 标准化路径：移除 './' 前缀
-                if file_path.startswith('./'):
+                if file_path and file_path.startswith('./'):
                     file_path = file_path[2:]
-                
+
                 # 去重：如果路径已经处理过，跳过
                 if file_path in seen_paths:
                     continue
@@ -227,7 +227,6 @@ class CheckpointService:
                 "message": f"获取差异失败: {str(e)}",
             }
 
-
     def get_status(self) -> Dict[str, Any]:
         """
         获取当前Git状态。
@@ -248,16 +247,16 @@ class CheckpointService:
                     file_path = item.a_path
                 else:  # 修改或新增的文件使用新路径
                     file_path = item.b_path if item.b_path else item.a_path
-                
+
                 # 标准化路径：移除 './' 前缀
-                if file_path.startswith('./'):
+                if file_path and file_path.startswith('./'):
                     file_path = file_path[2:]
-                
+
                 # 去重：如果路径已经处理过，跳过
                 if file_path in seen_paths:
                     continue
                 seen_paths.add(file_path)
-                
+
                 change_info = {
                     "path": file_path,
                     "change_type": item.change_type,  # 'M'=修改, 'A'=新增, 'D'=删除

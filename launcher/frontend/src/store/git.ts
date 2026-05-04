@@ -7,6 +7,7 @@ export interface CommitDetail {
   author: string;
   parents: string[];
   is_head: boolean;
+  refs?: string[];
 }
 
 export interface BranchInfo {

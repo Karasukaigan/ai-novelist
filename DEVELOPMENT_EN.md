@@ -77,6 +77,25 @@ with open('backend/data/config/store.json', 'r') as f:
 
 ---
 
+## Git Collaboration Standards
+
+### Commit Messages
+
+**Rule: All Git commit messages must be written in Chinese.**
+
+- Use Chinese to describe the specific content of each update, so that users can quickly understand the intent of the changes
+- Follow the format `<type>: <brief description>`, for example:
+  - `feat: 添加启动器模块` (feat: add launcher module)
+  - `fix: 修复文件服务路径解析错误` (fix: fix file service path parsing error)
+  - `refactor: 重构配置初始化逻辑` (refactor: refactor configuration initialization logic)
+- Commit messages should be concise and clear, allowing users to easily select the appropriate save point or branch locally
+
+**Reasons:**
+- Reduce user comprehension cost; no translation needed to grasp update content
+- Facilitate quick search and traceability of specific feature changes in Git logs
+
+---
+
 ## Frontend Standards
 
 Unified use of defined theme colors, such as `text-theme-green`
