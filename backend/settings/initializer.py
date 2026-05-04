@@ -2,6 +2,7 @@ import os
 import time
 import logging
 from pathlib import Path
+from git import Repo
 
 from backend.settings.settings import settings
 
@@ -11,10 +12,6 @@ logger = logging.getLogger(__name__)
 def _initialize_git(base_dir: Path):
     """初始化Git仓库和相关配置文件"""
     try:
-        # 使用 settings 中的 GIT_EXECUTABLE 路径配置 gitpython
-        import git
-        git.refresh(path=settings.GIT_EXECUTABLE)
-        from git import Repo
 
         git_dir = base_dir / ".git"
 

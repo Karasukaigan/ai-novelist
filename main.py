@@ -6,11 +6,10 @@ from pathlib import Path
 def setup_portable_git():
     """检测并使用便携版 Git（便携 Python 模式）"""
     script_dir = Path(sys.argv[0]).parent.resolve()
-    git_exe = script_dir / 'bin' / 'PortableGit' / 'mingw64' / 'bin' / 'git.exe'
+    git_exe = script_dir / 'bin' / 'git' / 'bin' / 'git.exe'
     if git_exe.exists():
         os.environ['GIT_PYTHON_GIT_EXECUTABLE'] = str(git_exe)
         os.environ['GIT_PYTHON_REFRESH'] = 'quiet'
-        # 同时添加到 PATH
         git_bin = git_exe.parent
         os.environ['PATH'] = str(git_bin) + os.pathsep + os.environ.get('PATH', '')
         return True
