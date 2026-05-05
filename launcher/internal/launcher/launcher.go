@@ -154,6 +154,12 @@ func DownloadLaunch(projectPath string, logger Logger) (*LaunchResult, error) {
 	if err := backend.PipInstall(projectPath, pythonPath, logger); err != nil {
 		return nil, err
 	}
+	logger.Logf("=== 复制 VC++ 运行时 DLL ===")
+	if err := updater.EnsureVcRedist(projectPath); err != nil {
+		logger.Logf("复制 VC++ 运行时 DLL 失败（非致命）: %v", err)
+	} else {
+		logger.Logf("VC++ 运行时 DLL 已就绪")
+	}
 	logger.Logf("=== 后端依赖部署完成 ===")
 
 	logger.Logf("=== 部署前端 ===")

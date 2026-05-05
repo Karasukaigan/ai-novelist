@@ -1,4 +1,5 @@
 import logging
+import sys
 from pathlib import Path
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from backend.settings.settings import settings
@@ -34,7 +35,12 @@ def convert_to_langchain_config(mcp_servers: dict) -> dict:
                   
                 # 处理 uvx 命令
                 if command == "uvx":
-                    # uv 已作为 pip 依赖安装，uvx 在 Python 环境的 Scripts 目录下可用
+                    # 使用绝对路径，避免子进程因 PATH 找不到 uvx.exe
+                    uvx_path = Path(sys.executable).parent / "uvx"
+                    if sys.platform == "win32":
+                        uvx_path = uvx_path.with_suffix(".exe")
+                    if uvx_path.exists():
+                        command = str(uvx_path)
                     # 添加阿里镜像源参数（Python 包镜像）
                     args = ["--index-url", "https://mirrors.aliyun.com/pypi/simple/"] + args
                     logger.info(f"使用 uvx 命令 (阿里镜像源): {command} {' '.join(args)}")

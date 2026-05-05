@@ -110,6 +110,43 @@ func EnsureRipgrep(projectDir string) error {
 	return nil
 }
 
+// vcDLLs 需要复制的 VC++ 运行时 DLL 列表
+var vcDLLs = []string{"msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"}
+
+// EnsureVcRedist 将启动器同级 vcredist/ 目录下的 VC++ 运行时 DLL 复制到 chromadb_rust_bindings/ 目录
+func EnsureVcRedist(projectDir string) error {
+	exeDir := getExeDir()
+	srcDir := filepath.Join(exeDir, "vcredist")
+
+	// 检查 vcredist/ 是否存在
+	if _, err := os.Stat(srcDir); os.IsNotExist(err) {
+		return fmt.Errorf("未找到 vcredist 目录: %s", srcDir)
+	}
+
+	// 目标目录：.venv/Lib/site-packages/chromadb_rust_bindings/
+	dstDir := filepath.Join(projectDir, ".venv", "Lib", "site-packages", "chromadb_rust_bindings")
+	if _, err := os.Stat(dstDir); os.IsNotExist(err) {
+		return fmt.Errorf("未找到 chromadb_rust_bindings 目录: %s", dstDir)
+	}
+
+	for _, dll := range vcDLLs {
+		dst := filepath.Join(dstDir, dll)
+		// 已存在则跳过
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
+		src := filepath.Join(srcDir, dll)
+		data, err := os.ReadFile(src)
+		if err != nil {
+			return fmt.Errorf("读取 %s 失败: %w", src, err)
+		}
+		if err := os.WriteFile(dst, data, 0644); err != nil {
+			return fmt.Errorf("复制 %s 失败: %w", dll, err)
+		}
+	}
+	return nil
+}
+
 // EnsureGit 检查启动器同级目录是否有 PortableGit 安装包，下载后解压到 qingzhu/bin/git/ 下
 func EnsureGit(projectDir string, logger Logger) error {
 	exeDir := getExeDir()

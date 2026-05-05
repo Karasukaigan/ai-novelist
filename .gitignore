@@ -136,3 +136,6 @@ launcher/*.exe
 
 # Data directory (user data, not version controlled)
 data/
+
+# Visual C++ Redistributable (runtime dependency, not version controlled)
+vcredist/

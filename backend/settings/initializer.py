@@ -9,23 +9,6 @@ from backend.settings.settings import settings
 logger = logging.getLogger(__name__)
 
 
-def _ensure_data_subdirs(data_dir: Path):
-    """检查并创建 data 下所有一级文件夹"""
-    expected_dirs = [
-        "config",
-        "chromadb",
-        "db",
-        "uploads",
-        "temp",
-        "skills",
-    ]
-    for name in expected_dirs:
-        subdir = data_dir / name
-        if not subdir.exists():
-            os.makedirs(subdir, exist_ok=True)
-            logger.info(f"创建数据目录: {subdir}")
-
-
 def _initialize_git(base_dir: Path):
     """初始化Git仓库和相关配置文件"""
     try:
