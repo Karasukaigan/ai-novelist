@@ -1,6 +1,23 @@
+import { createRequire } from 'module';
 import { ipcMain } from 'electron';
 import { spawn } from 'node-pty';
 import { getDefaultShell } from '../utils/constants.js';
+
+// ── 修复 node-pty 在 Windows 上 kill 时派生 conpty_console_list_agent 子进程导致 AttachConsole failed 报错 ──
+// 该 agent 用于获取控制台进程列表以逐个 kill，但这个 fork 出的子进程在控制台已断开时
+// 会抛出未捕获异常并污染日志。这里直接替换其实现，跳过 fork 流程。
+if (process.platform === 'win32') {
+  try {
+    const _require = createRequire(import.meta.url);
+    const windowsPtyAgentModule = _require('node-pty/lib/windowsPtyAgent');
+    windowsPtyAgentModule.WindowsPtyAgent.prototype._getConsoleProcessList = function () {
+      // 不 fork 子进程，直接返回 innerPid，避免 AttachConsole failed 报错
+      return Promise.resolve([this._innerPid]);
+    };
+  } catch {
+    // 非打包环境可能路径不同，静默忽略
+  }
+}
 
 class TerminalManager {
   constructor() {
