@@ -15,6 +15,9 @@ from backend.ai_agent.core.tool_load import import_tools
 from backend.ai_agent.core.system_prompt_builder import SystemPromptBuilder
 import uuid
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 class State(MessagesState):
     """包含消息的状态,不包括系统提示词"""
@@ -193,8 +196,10 @@ def with_graph_builder(func: Callable[[Any], Any]) -> Callable[[Any], Any]:
             """执行工具调用"""
             result = []
             # 处理最后一条消息中的工具调用
+            logger.info(f"测试信息：{state['messages'][-1].tool_calls}")
             for tool_call in state["messages"][-1].tool_calls:
                 tool_name = tool_call["name"]
+                logger.info(f"[DEBUG] tool_name = {repr(tool_name)}")
                 tool = tools_by_name[tool_name]
 
                 # 格式化参数显示

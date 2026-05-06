@@ -110,6 +110,9 @@ async def send_chat_message(request: ChatMessageRequest):
                 # 在控制台打印流式传输信息
                 if message_chunk.content:
                     print(message_chunk.content, end="|", flush=True)
+                if message_chunk.tool_call_chunks:
+                    for tcc in message_chunk.tool_call_chunks:
+                        print(f"[TOOL_CALL] name={tcc.get('name','')} args={tcc.get('args','')}", flush=True)
                 
                 # 使用model_dump方法序列化完整的消息对象
                 # 添加分隔符，避免被多个json对象被拼接到一起，进而造成前端消息显示不全，隔三岔五缺几个字符的问题
@@ -193,6 +196,9 @@ async def send_interrupt_response(request: InterruptResponseRequest):
                 
                 if message_chunk.content:
                     print(message_chunk.content, end="/", flush=True)
+                if message_chunk.tool_call_chunks:
+                    for tcc in message_chunk.tool_call_chunks:
+                        print(f"[TOOL_CALL] name={tcc.get('name','')} args={tcc.get('args','')}", flush=True)
                 
                 # 使用model_dump方法序列化完整的消息对象
                 serialized_chunk = message_chunk.model_dump()
