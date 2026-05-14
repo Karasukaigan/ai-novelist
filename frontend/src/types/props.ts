@@ -262,6 +262,16 @@ export interface DeleteModeConfirmModalProps {
   onConfirm: (modeId: string) => Promise<void>;
 }
 
+// ==================== Chat / 聊天会话组件 ====================
+
+export interface DeleteSessionConfirmModalProps {
+  isOpen: boolean;
+  sessionId: string;
+  sessionName: string;
+  onClose: () => void;
+  onConfirm: (sessionId: string) => Promise<void>;
+}
+
 // ==================== MCP / MCP 服务器组件 ====================
 
 export interface ServerListPanelProps {}

@@ -33,6 +33,8 @@ class Settings:
         # SQLite数据库配置
         self.DB_DIR: str = str(Path(self.DATA_DIR) / "db")
         self.CHECKPOINTS_DB_PATH: str = str(Path(self.DATA_DIR) / "db" / "checkpoints.db")
+        # 对话存储数据库（新，独立于 langgraph checkpoint）
+        self.CONVERSATIONS_DB_PATH: str = str(Path(self.DATA_DIR) / "db" / "conversations.db")
         # 上传文件目录
         self.UPLOADS_DIR: str = str(Path(self.DATA_DIR) / "uploads")
         # 临时文件目录

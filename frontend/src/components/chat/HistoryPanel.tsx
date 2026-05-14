@@ -3,19 +3,22 @@ import { useDispatch, useSelector } from 'react-redux';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTrash } from '@fortawesome/free-solid-svg-icons';
 import type { RootState, ChatSession } from '../../types';
-import { setHistoryExpanded, setSelectedThreadId } from '../../store/chat';
+import { setHistoryExpanded, setSelectedThreadId, setState, setMessagesTree } from '../../store/chat';
 import httpClient from '../../utils/httpClient';
+import DeleteSessionConfirmModal from './modals/DeleteSessionConfirmModal';
 
 const HistoryPanel = () => {
   const dispatch = useDispatch();
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // 从Redux获取当前thread_id和历史面板展开状态
+  // 删除确认弹窗状态
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false);
+  const [sessionToDelete, setSessionToDelete] = useState('');
+
   const currentThreadId = useSelector((state: RootState) => state.chatSlice.state?.config?.configurable?.thread_id);
   const expanded = useSelector((state: RootState) => state.chatSlice.historyExpanded);
 
-  // 加载会话列表
   const loadSessions = async () => {
     try {
       setLoading(true);
@@ -34,78 +37,84 @@ const HistoryPanel = () => {
     loadSessions();
   }, []);
 
+  // 获取会话名称
+  const getSessionName = (sessionId: string): string => {
+    const session = sessions.find(s => s.session_id === sessionId);
+    return session?.preview || '无标题';
+  };
+
   // 加载指定会话
   const handleLoadSession = async (threadId: string) => {
     try {
-      // 切换到指定会话
-      const result = await httpClient.post('/api/chat/update-thread', { thread_id: threadId });
-      // 重新加载状态
-      const initialState = await httpClient.get('/api/chat/state');
-      if (initialState && initialState.values) {
-        initialState.values.messages = initialState.values.messages || [];
+      // 通过 config API 切换 thread_id
+      await httpClient.post('/api/config/store', { key: 'thread_id', value: threadId });
+      dispatch(setSelectedThreadId(threadId));
+
+      // 从 history API 加载完整树信息
+      const result = await httpClient.get(`/api/history/messages/${threadId}`);
+      // result = { messages, active_leaf, active_path, branch_points }
+      if (result?.messages) {
+        dispatch(setMessagesTree({
+          messages: result.messages,
+          active_leaf: result.active_leaf,
+          active_path: result.active_path,
+          branch_points: result.branch_points,
+          thread_id: threadId,
+        }));
       }
-      dispatch({ type: 'chatSlice/setState', payload: initialState });
-      // 从后端返回的结果中获取thread_id
-      const actualThreadId = result?.thread_id;
-      dispatch(setSelectedThreadId(actualThreadId));
-      console.log("切换会话成功，thread_id:", actualThreadId);
+
+      console.log("切换会话成功，thread_id:", threadId);
     } catch (error) {
       console.error('切换会话失败:', error);
     }
   };
 
-  // 删除会话
-  const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation(); // 阻止事件冒泡，避免触发会话切换
-    
-    if (!confirm(`确定要删除这个对话吗？`)) {
-      return;
-    }
-    
+  // 删除会话 - 显示确认弹窗
+  const handleDeleteSession = (e: React.MouseEvent, sessionId: string) => {
+    e.stopPropagation();
+    setSessionToDelete(sessionId);
+    setShowDeleteConfirmModal(true);
+  };
+
+  // 确认删除会话
+  const confirmDeleteSession = async (sessionId: string) => {
     try {
       await httpClient.delete(`/api/history/sessions/${sessionId}`);
-      // 重新加载会话列表
+      setShowDeleteConfirmModal(false);
+      setSessionToDelete('');
       await loadSessions();
     } catch (error) {
       console.error('删除会话失败:', error);
       alert('删除会话失败，请重试');
+      setShowDeleteConfirmModal(false);
+      setSessionToDelete('');
     }
   };
 
-  // 显示的会话列表（展开时显示全部，否则显示前4个）
   const displaySessions = expanded ? sessions : sessions.slice(0, 4);
 
-  // 格式化时间戳
   const formatTimestamp = (timestamp: number | null): string => {
     if (!timestamp) return '';
-    const date = new Date(timestamp);
+    const date = new Date(timestamp * 1000);
     return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:${String(date.getMinutes()).padStart(2, '0')}`;
   };
 
   return (
     <div className="flex flex-col w-full h-full">
-      {/* 标题栏 */}
       <div className="flex justify-between items-center p-3">
         <h3 className="text-theme-white font-bold text-lg">最近对话</h3>
         {!expanded && (
-          <button
-            onClick={() => dispatch(setHistoryExpanded(true))}
-            className="text-theme-green text-sm hover:text-theme-white transition-colors"
-          >
+          <button onClick={() => dispatch(setHistoryExpanded(true))} className="text-theme-green text-sm hover:text-theme-white transition-colors">
             查看更多
           </button>
         )}
         {expanded && (
-          <button
-            onClick={() => dispatch(setHistoryExpanded(false))}
-            className="text-theme-green text-sm hover:text-theme-white transition-colors"
-          >
+          <button onClick={() => dispatch(setHistoryExpanded(false))} className="text-theme-green text-sm hover:text-theme-white transition-colors">
             收起
           </button>
         )}
       </div>
 
-      {/* 会话列表 */}
       <div className="flex-1 overflow-y-auto">
         {loading ? (
           <div className="text-theme-gray3 text-center">加载中...</div>
@@ -138,14 +147,24 @@ const HistoryPanel = () => {
                     />
                   </div>
                 </div>
-                <div className="text-theme-gray3 text-xs">
-                  {session.message_count} 条消息
-                </div>
+                <div className="text-theme-gray3 text-xs">{session.message_count} 条消息</div>
               </div>
             ))}
           </div>
         )}
       </div>
+
+      {/* 删除会话确认弹窗 */}
+      <DeleteSessionConfirmModal
+        isOpen={showDeleteConfirmModal}
+        sessionId={sessionToDelete}
+        sessionName={getSessionName(sessionToDelete)}
+        onClose={() => {
+          setShowDeleteConfirmModal(false);
+          setSessionToDelete('');
+        }}
+        onConfirm={confirmDeleteSession}
+      />
     </div>
   );
 };

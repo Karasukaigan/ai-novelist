@@ -1,13 +1,12 @@
-import type { ToolCall, StreamChunk, InterruptResponse } from '../types/langgraph';
+import type { ToolCall, InterruptResponse } from '../types/langgraph';
 import httpClient from './httpClient';
 import wsClient from './wsClient';
-import { tryCompleteJSON } from './jsonUtils';
-import { createAiMessage, updateAiMessage, setState, setMessage, clearInterrupt, setIsStreaming, addUserMessage, addToolMessage } from '../store/chat';
+import { createAiMessage, updateAiMessage, setMessage, clearInterrupt, setIsStreaming, addUserMessage, addToolMessage } from '../store/chat';
 import type { Dispatch } from '@reduxjs/toolkit';
 import { exitDiffMode, saveTabContent, decreaseTab, clearAiSuggestContent } from '../store/editor';
+import type { RootState } from '../types';
 import { FILE_TOOLS } from './fileToolHandler';
 import { computeDiff, hasDiff } from './diffUtils';
-import type { RootState } from '../types';
 
 // 处理中断响应的共享函数
 export const handleInterruptResponse = async (
@@ -98,7 +97,6 @@ export const handleInterruptResponse = async (
     const decoder = new TextDecoder();
     let currentAiMessageId: string | null = null;
     let newAiResponse = "";
-    const toolCallChunksMap = new Map<number, { name?: string; args: string; id?: string }>();
 
     while (true) {
       const { done, value } = await reader.read();
@@ -109,84 +107,50 @@ export const handleInterruptResponse = async (
       
       for (const line of lines) {
         try {
-          const parsedChunk = JSON.parse(line) as StreamChunk;
-          // console.log("解析后的数据：", parsedChunk);
+          const parsedChunk = JSON.parse(line);
 
-          // 处理流式传输中断信号
           if (parsedChunk.interrupted) {
             console.log("流式传输已被中断");
             dispatch(setIsStreaming(false));
             break;
           }
 
-          if (parsedChunk.type === 'AIMessageChunk') {
-            if (!currentAiMessageId && parsedChunk.id) {
-              const messageId = parsedChunk.id;
-              currentAiMessageId = messageId;
-               
-              dispatch(createAiMessage({ id: messageId }));
-            }
+          if (!currentAiMessageId && (parsedChunk.content || parsedChunk.tool_calls?.length)) {
+            const messageId = `temp-ai-${Date.now()}`;
+            currentAiMessageId = messageId;
+            dispatch(createAiMessage({ id: messageId }));
+          }
 
-            if (parsedChunk.content) {
-              newAiResponse += parsedChunk.content;
-              if (currentAiMessageId) {
-                dispatch(updateAiMessage({
-                  id: currentAiMessageId,
-                  content: newAiResponse
-                }));
-              }
-            }
-
-            if (parsedChunk.tool_call_chunks && parsedChunk.tool_call_chunks.length > 0) {
-              for (const chunk of parsedChunk.tool_call_chunks) {
-                const index = chunk.index ?? 0;
-                if (!toolCallChunksMap.has(index)) {
-                  toolCallChunksMap.set(index, { args: '' });
-                }
-                const existing = toolCallChunksMap.get(index)!;
-                // 当null/undefined/""时，避免覆盖
-                if (chunk.name) {
-                  (existing as any).name = chunk.name;
-                }
-                if (chunk.args) {
-                  existing.args += chunk.args;
-                }
-                if (chunk.id !== null && chunk.id !== undefined) {
-                  (existing as any).id = chunk.id;
-                }
-              }
-
-              const toolCalls: ToolCall[] = [];
-              for (const [index, existing] of toolCallChunksMap.entries()) {
-                try {
-                  const args = JSON.parse(existing.args);
-                  toolCalls.push({
-                    id: (existing as any).id || 'unknown',
-                    name: (existing as any).name || 'unknown',
-                    args: args,
-                    type: 'tool_call'
-                  });
-                } catch (e) {
-                  const completedArgs = tryCompleteJSON(existing.args);
-                  toolCalls.push({
-                    id: (existing as any).id || 'unknown',
-                    name: (existing as any).name || 'unknown',
-                    args: { _loading: true, _partial_args: completedArgs },
-                    type: 'tool_call'
-                  });
-                }
-              }
-
+          if (parsedChunk.content) {
+            newAiResponse += parsedChunk.content;
+            if (currentAiMessageId) {
               dispatch(updateAiMessage({
-                id: currentAiMessageId!,
+                id: currentAiMessageId,
+                content: newAiResponse
+              }));
+            }
+          }
+
+          if (parsedChunk.tool_calls && parsedChunk.tool_calls.length > 0) {
+            const toolCalls: ToolCall[] = parsedChunk.tool_calls.map((tc: any) => ({
+              id: tc.id || 'unknown',
+              type: 'function',
+              function: {
+                name: tc.function?.name || 'unknown',
+                arguments: tc.function?.arguments || ''
+              }
+            }));
+
+            if (currentAiMessageId) {
+              dispatch(updateAiMessage({
+                id: currentAiMessageId,
                 content: newAiResponse,
                 tool_calls: toolCalls
               }));
-
-              // 立即处理文件工具调用
-                processFileToolCalls(toolCalls);
-              }
             }
+
+            processFileToolCalls(toolCalls);
+          }
         } catch (e) {
           console.log('无法解析chunk:', line);
         }
@@ -195,15 +159,6 @@ export const handleInterruptResponse = async (
     
     // 流式传输结束，清除状态
     dispatch(setIsStreaming(false));
-    
-    // 获取最终状态
-    try {
-      const finalState = await httpClient.get('/api/chat/state');
-      dispatch(setState(finalState));
-      console.log("获取最终状态成功，",finalState);
-    } catch (error) {
-      console.error('获取最终状态失败:', error);
-    }
   } catch (error) {
     console.error('处理中断响应失败:', error);
   }

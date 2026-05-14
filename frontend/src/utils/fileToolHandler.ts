@@ -6,6 +6,7 @@ import type { RootState } from '../types';
 import type { InsertLineItem, DeleteLineItem, ReplaceLineItem } from '../types';
 import httpClient from './httpClient';
 import { createPathStabilizer } from './paramStabilizer';
+import { tryCompleteJSON } from './jsonUtils';
 import CryptoJS from 'crypto-js';
 
 // 支持的文件工具列表
@@ -267,24 +268,22 @@ export const useFileToolHandler = () => {
   // 处理AI消息中的文件工具调用
   const processFileToolCalls = async (toolCalls: any[]) => {
     for (const toolCall of toolCalls) {
-      const toolName = toolCall.name;
+      const toolName = toolCall.function?.name;
       
       // 只处理支持的文件工具
       if (FILE_TOOLS.includes(toolName || '')) {
-        const args = toolCall.args;
-        
-        if ((args as any)._loading && (args as any)._partial_args) {
-          // 处理加载中的_partial_args
-          try {
-            const partialArgs = JSON.parse((args as any)._partial_args);
-            await handleFileToolCall(toolName || '', partialArgs, true);
-          } catch (e) {
-            console.error("解析_partial_args失败:", e);
-          }
-        } else {
-          // 处理完整的args
-          await handleFileToolCall(toolName || '', args, false);
+        const argsStr = toolCall.function?.arguments || '';
+        let parsed: any;
+        let isPartial = false;
+        try {
+          parsed = JSON.parse(argsStr);
+        } catch {
+          // 参数不完整，用 tryCompleteJSON 补全后仍视为 partial，
+          // 交给 handleFileToolCall 中的路径稳定器处理
+          parsed = JSON.parse(tryCompleteJSON(argsStr));
+          isPartial = true;
         }
+        await handleFileToolCall(toolName || '', parsed, isPartial);
       }
     }
   };

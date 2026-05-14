@@ -12,7 +12,7 @@ const ContextProgressBar = () => {
   // 从state获取最新AI消息的tokens
   const currentTokens = useSelector((state: RootState) => {
     const messages = state.chatSlice.state?.values?.messages || [];
-    const lastAiMessage = messages.filter(msg => msg.type === 'ai').pop();
+    const lastAiMessage = messages.filter(msg => msg.role === 'assistant').pop();
     if (!lastAiMessage) return 0;
     
     // 从usage_metadata获取

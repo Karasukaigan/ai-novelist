@@ -1,6 +1,7 @@
 from backend.settings.settings import settings
 from backend.settings.initializer import initialize_directories_and_files
 from backend.api.chat_api import router as chat_router
+from backend.api.chat_api2 import router as chat_router2
 from backend.api.history_api import router as history_router
 from backend.api.file_api import router as file_router
 from backend.api.config_api import router as config_router
@@ -15,6 +16,7 @@ __all__ = [
     "settings",
     "initialize_directories_and_files",
     "chat_router",
+    "chat_router2",
     "history_router",
     "file_router",
     "config_router",

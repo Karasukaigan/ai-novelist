@@ -46,10 +46,6 @@ export type {
   InvalidToolCall,
   UsageMetadata,
   ResponseMetadata,
-  BaseMessage,
-  HumanMessage,
-  AIMessage,
-  ToolMessage,
   Message,
   InterruptValue,
   Interrupt,
@@ -197,6 +193,8 @@ export type {
   BaseDetailModalProps,
   DeleteBaseConfirmModalProps,
   RenameBaseModalProps,
+  // Chat Session
+  DeleteSessionConfirmModalProps,
   // Chat
   FilePathAutocompleteProps,
   // Search

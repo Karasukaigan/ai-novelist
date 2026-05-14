@@ -8,7 +8,10 @@
 import type {
   LangGraphState,
   ToolCall,
-  UsageMetadata
+  ToolRequestData,
+  UsageMetadata,
+  BranchPoint,
+  Message,
 } from './langgraph';
 
 /** 两步 RAG 配置 */
@@ -43,6 +46,14 @@ export interface ChatState {
   selectedModeId: string | null;
   /** 是否正在流式传输 */
   isStreaming: boolean;
+  /** 当前待审批的工具请求 */
+  currentToolRequest: ToolRequestData | null;
+  /** 分支树：完整消息列表（含所有分支） */
+  allMessages: Message[];
+  /** 分支树：当前活跃叶子 id */
+  activeLeaf: string | null;
+  /** 分支树：分支点信息 */
+  branchPoints: BranchPoint[];
 }
 
 // ==================== Editor Store ====================

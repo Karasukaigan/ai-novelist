@@ -1,483 +1,60 @@
 import logging
-import sqlite3
-import os
-import msgpack
-import json
-import asyncio
-from typing import List, Optional, Dict, Any
-from pydantic import BaseModel, Field
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import StreamingResponse
-from langchain_core.runnables.config import RunnableConfig
-from langchain_core.messages import RemoveMessage, HumanMessage, AIMessage
-from langgraph.graph.message import REMOVE_ALL_MESSAGES
 
-from backend.settings.settings import settings, get_db_connection
-from backend.ai_agent.models.stream_interrupt_manager import stream_interrupt_manager
-from backend.ai_agent.core.graph_builder import with_graph_builder
-import time
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
+
+from backend.storage import service as storage
 
 logger = logging.getLogger(__name__)
-db_path = settings.CHECKPOINTS_DB_PATH
 
-# 请求模型
-class GetCheckpointsRequest(BaseModel):
-    """获取存档点列表请求"""
-    thread_id: str = Field(default="default", description="会话ID")
-
-class RollbackCheckpointRequest(BaseModel):
-    """回档到指定存档点请求"""
-    thread_id: str = Field(default="default", description="会话ID")
-    checkpoint_index: int = Field(default=0, description="存档点索引")
-    new_message: str = Field(default="", description="新的用户消息内容")
-
-class GetMessagesRequest(BaseModel):
-    """获取历史消息列表请求"""
-    thread_id: str = Field(default="default", description="会话ID")
-
-class OperateMessagesRequest(BaseModel):
-    """操作历史消息请求"""
-    thread_id: str = Field(default="default", description="会话ID")
-    target_ids: Optional[List[str]] = Field(default=None, description="目标消息ID列表（可选，未传则删除全部）")
-
-class SummarizeRequest(BaseModel):
-    """总结对话请求"""
-    thread_id: str = Field(default="default", description="会话ID")
-
-class RollbackRequest(BaseModel):
-    """回档请求"""
-    thread_id: str = Field(default="default", description="会话ID")
-    message_id: str = Field(..., description="目标消息ID，用于定位回档点")
-    node_name: Optional[str] = Field(default="call_llm", description="节点名称，用于筛选存档点")
-
-class RegenerateRequest(BaseModel):
-    """重新生成请求"""
-    thread_id: str = Field(default="default", description="会话ID")
-    message_id: str = Field(..., description="目标消息ID，用于定位重新生成点")
-    new_content: Optional[str] = Field(default=None, description="新的消息内容（可选，不传则不修改）")
-    message_type: Optional[str] = Field(default="human", description="消息类型：'human' 或 'ai'")
-
-# 创建API路由器
 router = APIRouter(prefix="/api/history", tags=["History"])
 
-# API端点
 
-@router.post("/checkpoints", summary="获取指定会话id的存档点列表")
-async def get_checkpoints(request: GetCheckpointsRequest):
-    """
-    获取指定会话的所有存档点列表
-    
-    - **thread_id**: 会话ID
-    """
-    @with_graph_builder
-    async def list_history_checkpoint(graph,thread_id):
-        config = {"configurable": {"thread_id": thread_id}}
-        checkpoints = []
-        async for state in graph.aget_state_history(config):
-            print(f"next={state.next}, checkpoint_id={state.config['configurable']['checkpoint_id']}")
-            checkpoints.append({
-                "next": state.next,
-                "values": state.values,
-                "checkpoint_id": state.config['configurable']['checkpoint_id']
-            })
-        return {"checkpoints": checkpoints}
-    async for item in list_history_checkpoint(request.thread_id):
-        result = item
-    return result
+# ==================== 请求模型 ====================
 
-@router.post("/messages/operation", summary="操作历史消息", response_model=Dict[str, Any])
-async def operate_messages(request: OperateMessagesRequest):
-    """
-    对历史消息进行删除操作
-    
-    - **thread_id**: 会话ID
-    - **target_ids**: 目标消息ID列表（可选，未传则删除全部）
-    """
-    thread_id = request.thread_id
-    target_ids = request.target_ids
-    
-    # 使用装饰器创建图操作函数
-    @with_graph_builder
-    async def process_operate_messages(graph):
-        """处理操作历史消息"""
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-        
-        if target_ids is None:
-            # 删除所有消息
-            await graph.aupdate_state(config, {"messages": [RemoveMessage(id=REMOVE_ALL_MESSAGES)]})
-            return {"message": "已删除所有消息"}
-        else:
-            # 删除指定ID的消息（支持多个）
-            remove_messages = [RemoveMessage(id=target_id) for target_id in target_ids]
-            await graph.aupdate_state(config, {"messages": remove_messages})
-            return {"message": f"已删除消息ID: {', '.join(target_ids)}"}
-    
-    # 使用async for遍历生成器并获取结果
-    result = None
-    async for item in process_operate_messages():
-        result = item
-    return result
+class DeleteByContentIdRequest(BaseModel):
+    thread_id: str = Field(default="default", description="会话ID")
+    content_id: str = Field(..., description="消息的 content ID（前端生成的 id 字段）")
 
-@router.post("/summarize", summary="总结对话历史")
-async def summarize_conversation(request: SummarizeRequest):
-    """
-    总结对话历史
-    
-    - **thread_id**: 会话ID
-    """
-    thread_id = request.thread_id
-    
-    @with_graph_builder
-    async def generate_summary(graph):
-        """处理总结对话并返回流式响应"""
-        config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-        
-        # 直接传入总结消息，触发图执行
-        summarize_message = HumanMessage(content="@summarize")
-        
-        # 流式处理 - 传入消息列表触发图执行
-        async for message_chunk, metadata in graph.astream({"messages": [summarize_message]}, config, stream_mode="messages"):
-            # 在控制台打印流式传输信息
-            if message_chunk.content:
-                print(f"{message_chunk.content}", end="|", flush=True)
-            
-            # 使用model_dump方法序列化完整的消息对象
-            # 添加分隔符，避免被多个json对象被拼接到一起
-            serialized_chunk = message_chunk.model_dump()
-            yield json.dumps(serialized_chunk, ensure_ascii=False) + "\n"
-            await asyncio.sleep(0)
-    
-    return StreamingResponse(generate_summary(), media_type="text/event-stream")
 
-# 倒是内容返回的内容，可以根据存储到sqlite里面的元数据，返回更多详细情况
-@router.get("/sessions", summary="获取所有会话列表", response_model=Dict[str, Any])
+# ==================== 会话管理 ====================
+
+@router.get("/sessions", summary="获取所有会话列表")
 async def get_all_sessions():
-    """
-    获取所有会话的列表
-    
-    返回所有用户的会话信息，包括会话ID、消息数量等
-    """
-    
-    if not os.path.exists(db_path):
-        return {"sessions": []}
-    
-    # 使用上下文管理器确保连接正确关闭
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        
-        # 检查checkpoints表是否存在
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='checkpoints'")
-        if cursor.fetchone() is None:
-            return {"sessions": []}
-        
-        # 获取所有用户ID（会话ID）并按照最后访问时间排序
-        cursor.execute('''
-            SELECT DISTINCT thread_id,
-                   (SELECT MAX(checkpoint_id) FROM checkpoints WHERE thread_id = c.thread_id) as last_checkpoint_id
-            FROM checkpoints c
-            ORDER BY last_checkpoint_id DESC
-        ''')
-        user_ids = [row[0] for row in cursor.fetchall()]
-        
-        sessions = []
-        for user_id in user_ids:
-            # 获取该会话的检查点数量（消息数量）
-            cursor.execute('SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?', (user_id,))
-            message_count = cursor.fetchone()[0]
-            
-            # 获取创建时间和最后访问时间
-            # 由于数据库中没有created列，我们从checkpoint字段中提取时间戳
-            cursor.execute('''
-                SELECT checkpoint, checkpoint_id
-                FROM checkpoints
-                WHERE thread_id = ?
-                ORDER BY checkpoint_id ASC
-                LIMIT 1
-            ''', (user_id,))
-            first_checkpoint = cursor.fetchone()
-            created_at = None
-            
-            cursor.execute('''
-                SELECT checkpoint, checkpoint_id
-                FROM checkpoints
-                WHERE thread_id = ?
-                ORDER BY checkpoint_id DESC
-                LIMIT 1
-            ''', (user_id,))
-            last_checkpoint = cursor.fetchone()
-            last_accessed = None
-            
-            # 尝试从checkpoint数据中提取时间戳
-            if first_checkpoint and first_checkpoint[0]:
-                try:
-                    checkpoint_data = msgpack.unpackb(first_checkpoint[0])
-                    created_at = checkpoint_data.get('ts', None)
-                except:
-                    created_at = None
-            
-            if last_checkpoint and last_checkpoint[0]:
-                try:
-                    checkpoint_data = msgpack.unpackb(last_checkpoint[0])
-                    last_accessed = checkpoint_data.get('ts', None)
-                except:
-                    last_accessed = None
-            
-            # 获取最后一条消息作为预览
-            cursor.execute('''
-                SELECT checkpoint
-                FROM checkpoints
-                WHERE thread_id = ?
-                ORDER BY checkpoint_id DESC
-                LIMIT 1
-            ''', (user_id,))
-            last_checkpoint = cursor.fetchone()
-            preview = ""
-            
-            if last_checkpoint and last_checkpoint[0]:
-                try:
-                    checkpoint_data = msgpack.unpackb(last_checkpoint[0])
-                    channel_values = checkpoint_data.get('channel_values', {})
-                    messages = channel_values.get('messages', [])
-                    
-                    if messages:
-                        # 查找第一条人类消息（HumanMessage）作为标题
-                        first_human_message = None
-                        for msg in messages:
-                            # 处理ExtType格式的消息
-                            if hasattr(msg, 'code') and hasattr(msg, 'data'):
-                                try:
-                                    msg_data = msgpack.unpackb(msg.data)
-                                    if len(msg_data) > 2 and isinstance(msg_data[2], dict):
-                                        msg_content = msg_data[2]
-                                        msg_type = msg_content.get('type', '')
-                                        if msg_type == 'human':
-                                            first_human_message = msg_content
-                                            break
-                                except Exception as e:
-                                    logger.warning(f"解析ExtType消息失败: {e}")
-                                    continue
-                            elif isinstance(msg, dict):
-                                msg_type = msg.get('type', '')
-                                if msg_type == 'human':
-                                    first_human_message = msg
-                                    break
-                        
-                        if first_human_message:
-                            content = first_human_message.get('content', '')
-                            if content:
-                                # 取前7个字符作为标题
-                                preview = content[:7]
-                                if len(content) > 7:
-                                    preview += "..."
-                            else:
-                                preview = "消息内容为空"
-                        else:
-                            # 如果没有找到人类消息，使用最后一条消息
-                            last_message_data = messages[-1]
-                            if hasattr(last_message_data, 'code') and hasattr(last_message_data, 'data'):
-                                try:
-                                    msg_data = msgpack.unpackb(last_message_data.data)
-                                    if len(msg_data) > 2 and isinstance(msg_data[2], dict):
-                                        msg_content = msg_data[2]
-                                        content = msg_content.get('content', '')
-                                        if content:
-                                            preview = content[:7]
-                                            if len(content) > 7:
-                                                preview += "..."
-                                        else:
-                                            preview = "消息内容为空"
-                                    else:
-                                        preview = "消息格式不正确"
-                                except Exception as e:
-                                    logger.warning(f"解析ExtType消息失败: {e}")
-                                    preview = "无法解析消息预览"
-                            elif isinstance(last_message_data, dict):
-                                content = last_message_data.get('content', '')
-                                if content:
-                                    preview = content[:7]
-                                    if len(content) > 7:
-                                        preview += "..."
-                                else:
-                                    preview = "消息内容为空"
-                            else:
-                                preview = "消息格式无法解析"
-                    else:
-                        preview = "无消息内容"
-                except Exception as e:
-                    logger.warning(f"解析消息预览失败: {e}")
-                    preview = "无法解析消息预览"
-            
-            session_info = {
-                "session_id": user_id,
-                "message_count": message_count,
-                "created_at": created_at,
-                "last_accessed": last_accessed,
-                "preview": preview
+    conversations = storage.list_conversations()
+    return {
+        "sessions": [
+            {
+                "session_id": c.thread_id,
+                "message_count": c.msg_count,
+                "created_at": c.created_at,
+                "last_accessed": c.updated_at,
+                "preview": c.title,
             }
-            sessions.append(session_info)
-    
-    finally:
-        conn.close()
-    
-    return {"sessions": sessions}
+            for c in conversations
+        ]
+    }
 
-@router.delete("/sessions/{session_id}", summary="删除指定会话", response_model=Dict[str, Any])
+
+@router.delete("/sessions/{session_id}", summary="删除指定会话")
 async def delete_session(session_id: str):
-    """
-    删除指定会话的所有数据
-
-    - **session_id**: 会话ID
-    """
-        
-    if not os.path.exists(db_path):
-        raise HTTPException(status_code=404, detail="数据库文件不存在")
-
-    # 使用上下文管理器确保连接正确关闭
-    conn = get_db_connection()
-    try:
-        cursor = conn.cursor()
-        
-        # 检查会话是否存在
-        cursor.execute('SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?', (session_id,))
-        session_count = cursor.fetchone()[0]
-        
-        if session_count == 0:
-            raise HTTPException(status_code=404, detail="会话不存在")
-
-        # 删除会话数据，添加重试机制
-        max_retries = 3
-        retry_delay = 0.5  # 秒
-        checkpoints_deleted = 0
-        writes_deleted = 0
-        
-        for attempt in range(max_retries):
-            try:
-                cursor.execute('DELETE FROM checkpoints WHERE thread_id = ?', (session_id,))
-                checkpoints_deleted = cursor.rowcount
-                cursor.execute('DELETE FROM writes WHERE thread_id = ?', (session_id,))
-                writes_deleted = cursor.rowcount
-                
-                conn.commit()
-                break  # 成功则退出重试循环
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
-                    logger.warning(f"数据库锁定，第 {attempt + 1} 次重试...")
-                    time.sleep(retry_delay * (2 ** attempt))  # 指数退避
-                    continue
-                else:
-                    raise  # 重试次数用完或不是锁定错误，重新抛出异常
-        
-        return {
-            "checkpoints_deleted": checkpoints_deleted,
-            "writes_deleted": writes_deleted
-        }
-    
-    finally:
-        conn.close()
-
-# ========== 辅助函数 ==========
-
-async def find_checkpoint_by_message_id(graph, thread_id: str, message_id: str):
-    """
-    通过消息ID查找对应的checkpoint（匹配最后一个消息的ID）
-    
-    Args:
-        graph: 编译后的图实例
-        thread_id: 会话ID
-        message_id: 目标消息ID
-    
-    Returns:
-        匹配的checkpoint的完整state对象，如果找不到则返回None
-    """
-    config = {"configurable": {"thread_id": thread_id}}
-    
-    # 获取历史状态（按时间倒序）
-    async for state in graph.aget_state_history(config):
-        # 检查末尾消息的id是否匹配
-        messages = state.values.get("messages", [])
-        if messages:
-            last_message = messages[-1]
-            if hasattr(last_message, 'id') and last_message.id == message_id:
-                # 找到了匹配的checkpoint
-                logger.info(f"找到匹配的checkpoint: {state.config}, next={state.next}")
-                return state
-    
-    return None
+    conv = storage.get_conversation(session_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    storage.delete_conversation(session_id)
+    return {"message": f"会话 {session_id} 已删除"}
 
 
-# ========== 回档和重新生成API ==========
+# ==================== 消息管理 ====================
 
-@router.post("/regenerate/stream", summary="重新生成（流式，支持修改消息）")
-async def regenerate_from_checkpoint_stream(request: RegenerateRequest):
-    """
-    重新生成，可选择修改消息内容
-    
-    - **thread_id**: 会话ID
-    - **message_id**: 目标消息ID（前端气泡的ID）
-    - **new_content**: 新的消息内容（可选，不传则不修改，仅重新生成）
-    - **message_type**: 消息类型：'human' 或 'ai'
-    """
-    thread_id = request.thread_id
-    message_id = request.message_id
-    new_content = request.new_content
-    message_type = request.message_type or "human"
-    
-    # 为thread_id创建流式传输任务
-    stream_interrupt_manager.create_task(thread_id)
-    logger.info(f"为thread_id创建流式传输任务: {thread_id}")
-    
-    @with_graph_builder
-    async def process_regenerate_stream(graph):
-        """处理重新生成操作并流式返回"""
-        try:
-            # 通过消息ID找到对应的checkpoint（匹配最后一个消息的ID）
-            target_checkpoint = await find_checkpoint_by_message_id(graph, thread_id, message_id)
-            
-            if target_checkpoint is None:
-                yield json.dumps(
-                    {"error": f"未找到消息ID {message_id} 对应的checkpoint"},
-                    ensure_ascii=False
-                ) + "\n"
-                return
-            
-            logger.info(f"找到目标checkpoint: {target_checkpoint.config}")
-            
-            # 解析checkpoint对象获取config
-            target_config = target_checkpoint.config
-            
-            # 如果提供了新内容，需要先更新状态
-            if new_content is not None:
-                # 根据message_type创建新的消息对象，带上前端传来的message_id
-                if message_type == "human":
-                    new_msg = HumanMessage(content=new_content, id=message_id)
-                else:
-                    new_msg = AIMessage(content=new_content, id=message_id)
-                
-                # 使用当前checkpoint更新状态，添加新消息
-                fork_config =  await graph.aupdate_state(target_config, values={"messages": [new_msg]})
-            else:
-                # 如果没有新内容，直接使用目标配置
-                fork_config = target_config
-            
-            # 从当前checkpoint开始流式处理
-            async for message_chunk, metadata in graph.astream(None, fork_config, stream_mode="messages"):
-                # 检查是否被中断
-                if stream_interrupt_manager.is_interrupted(thread_id):
-                    logger.info(f"流式传输被中断: {thread_id}")
-                    yield json.dumps({"interrupted": True}, ensure_ascii=False) + "\n"
-                    break
-                
-                if message_chunk.content:
-                    print(message_chunk.content, end="|", flush=True)
-                
-                # 使用model_dump方法序列化完整的消息对象
-                serialized_chunk = message_chunk.model_dump()
-                yield json.dumps(serialized_chunk, ensure_ascii=False) + "\n"
-                await asyncio.sleep(0)
-        finally:
-            # 清理任务
-            stream_interrupt_manager.remove_task(thread_id)
-            logger.info(f"清理流式传输任务: {thread_id}")
-    
-    return StreamingResponse(process_regenerate_stream(), media_type="text/event-stream")
+@router.get("/messages/{thread_id}", summary="获取指定会话的完整树信息")
+async def get_messages(thread_id: str):
+    """返回完整消息树（含 active_leaf 和 branch_points）"""
+    return storage.get_full_tree(thread_id)
+
+
+@router.post("/messages/delete-by-id", summary="删除消息（级联删除所有分支）")
+async def delete_message_by_content_id(request: DeleteByContentIdRequest):
+    """级联删除消息及其所有后代，返回删除后的完整树"""
+    tree = storage.delete_message_cascade(request.thread_id, request.content_id)
+    return tree

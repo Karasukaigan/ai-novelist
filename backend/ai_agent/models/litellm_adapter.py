@@ -205,7 +205,7 @@ class LiteLLMAdapter(BaseChatModel):
         generation = ChatGeneration(message=final_message)
         return ChatResult(generations=[generation])
     
-    async def _astream(
+    async def astream(
         self,
         messages: List[BaseMessage],
         stop: Optional[List[str]] = None,
@@ -280,13 +280,14 @@ class LiteLLMAdapter(BaseChatModel):
             
             # 处理内容
             if hasattr(delta, 'content') and delta.content:
-                message = AIMessageChunk(content=delta.content)
+                message = AIMessageChunk(content=delta.content, id=response_id)
                 yield ChatGenerationChunk(message=message)
             
             # 处理reasoning_content
             if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
                 message = AIMessageChunk(
                     content="",
+                    id=response_id,
                     additional_kwargs={"reasoning_content": delta.reasoning_content}
                 )
                 yield ChatGenerationChunk(message=message)
@@ -302,6 +303,7 @@ class LiteLLMAdapter(BaseChatModel):
                     }
                     tool_message = AIMessageChunk(
                         content="",
+                        id=response_id,
                         tool_call_chunks=[tc_chunk]
                     )
                     yield ChatGenerationChunk(message=tool_message)

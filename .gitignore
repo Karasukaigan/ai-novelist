@@ -122,7 +122,6 @@ pnpm-lock.yaml
 # Executable files
 *.
 
-models/
 skills-main/
 
 frontend/node_modules/

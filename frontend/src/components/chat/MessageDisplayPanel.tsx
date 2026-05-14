@@ -1,11 +1,11 @@
 import { useRef, useState, useEffect } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faAngleRight, faAngleUp, faTrash, faRotateRight, faEdit, faCopy, faCheck } from '@fortawesome/free-solid-svg-icons';
+import { faAngleRight, faAngleUp, faTrash, faRotateRight, faEdit, faCopy, faCheck, faChevronLeft, faChevronRight } from '@fortawesome/free-solid-svg-icons';
 import type { RootState } from '../../types';
-import type { Message, AIMessage, StreamChunk, ToolCall } from '../../types/langgraph';
+import type { Message, StreamChunk, ToolCall, BranchPoint } from '../../types/langgraph';
 import { setAvailableTools } from '../../store/mode';
-import { setState, createAiMessage, updateAiMessage, setIsStreaming } from '../../store/chat';
+import { createAiMessage, updateAiMessage, updateMessages, setIsStreaming, setMessagesTree } from '../../store/chat';
 import httpClient from '../../utils/httpClient';
 import UnifiedModal from '../others/UnifiedModal';
 import { tryCompleteJSON } from '../../utils/jsonUtils';
@@ -36,8 +36,13 @@ const MessageDisplayPanel = () => {
   // 从Redux获取可用工具信息
   const availableTools = useSelector((state: RootState) => state.modeSlice.availableTools);
   
-  // 从Redux获取消息列表
+  // 从Redux获取消息列表和分支树信息
   const messages = useSelector((state: RootState) => state.chatSlice.state?.values?.messages || emptyMessages);
+  const chatState = useSelector((state: RootState) => state.chatSlice.state);
+  const branchPoints = useSelector((state: RootState) => state.chatSlice.branchPoints || []);
+  const allMessages = useSelector((state: RootState) => state.chatSlice.allMessages || []);
+  console.log('[分支调试] branchPoints:', JSON.stringify(branchPoints));
+  console.log('[分支调试] allMessages count:', allMessages.length);
   
   // 从Redux获取thread_id和mode
   const threadId = useSelector((state: RootState) => state.chatSlice.selectedThreadId) || 'default';
@@ -61,7 +66,6 @@ const MessageDisplayPanel = () => {
     };
     loadTools();
   }, []);
-
 
   // 自动滚动到最新消息
   const scrollToBottom = () => {
@@ -120,72 +124,62 @@ const MessageDisplayPanel = () => {
     }
   };
 
-  // 删除消息
+  // 删除消息（级联删除）
   const deleteMessage = async (msgId: string) => {
     try {
-      // 查找要删除的消息
-      const messageToDelete = messages.find(msg => msg.id === msgId);
-      
-      // 收集所有需要删除的消息 ID
-      const idsToDelete: string[] = [msgId];
-      
-      // 如果是 AI 消息，还需要删除其 tool_calls 对应的 ToolMessage
-      if (messageToDelete?.type === 'ai') {
-        const aiMessage = messageToDelete as AIMessage;
-        if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-          // 获取所有工具调用的 call_id
-          const toolCallIds = aiMessage.tool_calls.map(toolCall => toolCall.id);
-          
-          // 在所有消息中查找对应的 ToolMessage
-          toolCallIds.forEach(callId => {
-            const toolMessage = messages.find(msg =>
-              msg.type === 'tool' && (msg as any).tool_call_id === callId
-            );
-            if (toolMessage) {
-              idsToDelete.push(toolMessage.id);
-            }
-          });
-        }
-      }
-      console.log("idsToDelete:",idsToDelete)
-      const a = await httpClient.post('/api/history/messages/operation', {
+      const result = await httpClient.post('/api/history/messages/delete-by-id', {
         thread_id: threadId,
-        target_ids: idsToDelete,
-        mode: selectedModeId
+        content_id: msgId
       });
-      console.log("a",a)
-
-      // 重新获取状态以刷新显示
-      const finalState = await httpClient.get('/api/chat/state');
-      dispatch(setState(finalState));
-      console.log("state,",finalState)
+      // 后端返回完整树，直接更新
+      dispatch(setMessagesTree(result));
     } catch (error) {
       setModal({ show: true, message: (error as Error).toString(), onConfirm: null, onCancel: null });
     }
   };
 
-  // 重新生成消息（流式处理）
-  const regenerateMessage = async (msgId: string, messageType: 'human' | 'ai') => {
+  // 生成唯一消息ID
+  const generateMessageId = () => `lc_run--${crypto.randomUUID()}`;
+
+  // 处理流式响应尾部的 state_update
+  const processStateUpdateLine = (line: string): boolean => {
+    try {
+      const parsed = JSON.parse(line);
+      if (parsed.type === 'state_update') {
+        dispatch(setMessagesTree({
+          messages: parsed.messages,
+          active_leaf: parsed.active_leaf,
+          active_path: parsed.active_path,
+          branch_points: parsed.branch_points,
+        }));
+        return true;
+      }
+    } catch {
+      // 非 JSON 或解析失败，忽略
+    }
+    return false;
+  };
+
+  // 重新生成消息（调用 /api/chat2/regenerate）
+  const regenerateMessage = async (msgId: string) => {
     try {
       dispatch(setIsStreaming(true));
 
-      const response = await httpClient.streamRequest('/api/history/regenerate/stream', {
+      // 立即截断当前节点之后的旧消息，避免旧内容残留
+      const msgIndex = messages.findIndex(m => m.id === msgId);
+      if (msgIndex !== -1) {
+        dispatch(updateMessages(messages.slice(0, msgIndex + 1)));
+      }
+
+      const response = await httpClient.streamRequest('/api/chat2/regenerate', {
         method: 'POST',
-        body: {
-          thread_id: threadId,
-          message_id: msgId,
-          message_type: messageType
-        }
+        body: { msg_id: msgId, edited_content: null }
       });
 
-      if (!response.ok) {
-        throw new Error('重新生成请求失败');
-      }
+      if (!response.ok) throw new Error('重新生成请求失败');
 
       const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('无法获取响应流');
-      }
+      if (!reader) throw new Error('无法获取响应流');
 
       const decoder = new TextDecoder();
       let currentAiMessageId: string | null = null;
@@ -201,90 +195,92 @@ const MessageDisplayPanel = () => {
         const lines = chunk.split('\n').filter(line => line.trim() !== '');
 
         for (const line of lines) {
-          try {
-            const parsedChunk = JSON.parse(line) as StreamChunk;
+          // 检查是否是 state_update
+          if (processStateUpdateLine(line)) {
+            dispatch(setIsStreaming(false));
+            break;
+          }
 
-            // 处理流式传输中断信号
+          try {
+            const parsedChunk = JSON.parse(line);
+
             if (parsedChunk.interrupted) {
               console.log("重新生成被中断");
               dispatch(setIsStreaming(false));
               break;
             }
 
-            if (parsedChunk.type === 'AIMessageChunk') {
-              if (!currentAiMessageId && parsedChunk.id) {
-                const messageId = parsedChunk.id;
-                currentAiMessageId = messageId;
-                dispatch(createAiMessage({ id: messageId }));
+            if (parsedChunk.type === 'state_update') {
+              dispatch(setMessagesTree({
+                messages: parsedChunk.messages,
+                active_leaf: parsedChunk.active_leaf,
+                active_path: parsedChunk.active_path,
+                branch_points: parsedChunk.branch_points,
+              }));
+              dispatch(setIsStreaming(false));
+              break;
+            }
+
+            if (!currentAiMessageId && (parsedChunk.content || parsedChunk.tool_calls?.length)) {
+              const aiMessageId = generateMessageId();
+              currentAiMessageId = aiMessageId;
+              dispatch(createAiMessage({ id: aiMessageId }));
+            }
+
+            if (parsedChunk.content) newAiResponse += parsedChunk.content;
+            if (parsedChunk.reasoning_content) newReasoningContent += parsedChunk.reasoning_content;
+
+            if (currentAiMessageId && (parsedChunk.content || parsedChunk.reasoning_content)) {
+              const updateData: any = { id: currentAiMessageId, content: newAiResponse };
+              if (newReasoningContent) updateData.reasoning_content = newReasoningContent;
+              dispatch(updateAiMessage(updateData));
+            }
+
+            // 流式 tool_calls（后端已合并，直接替换）
+            if (parsedChunk.tool_calls && parsedChunk.tool_calls.length > 0) {
+              for (const tc of parsedChunk.tool_calls) {
+                const index = tc.index ?? 0;
+                toolCallChunksMap.set(index, {
+                  id: tc.id || toolCallChunksMap.get(index)?.id || '',
+                  name: tc.function?.name || toolCallChunksMap.get(index)?.name || '',
+                  args: tc.function?.arguments || ''
+                });
               }
 
-              if (parsedChunk.content) {
-                newAiResponse += parsedChunk.content;
-              }
-
-              // 处理 reasoning_content
-              if (parsedChunk.additional_kwargs?.reasoning_content) {
-                newReasoningContent += parsedChunk.additional_kwargs.reasoning_content as string;
-              }
-
-              // 有content或reasoning_content时立即更新，实现流式渲染
-              if (currentAiMessageId) {
-                const updateData: any = {
-                  id: currentAiMessageId,
-                  content: newAiResponse
-                };
-                if (newReasoningContent) {
-                  updateData.reasoning_content = newReasoningContent;
+              const toolCalls: ToolCall[] = [];
+              for (const [, existing] of toolCallChunksMap.entries()) {
+                try {
+                  JSON.parse(existing.args);
+                  toolCalls.push({
+                    id: existing.id || 'unknown',
+                    type: 'function',
+                    function: {
+                      name: existing.name || 'unknown',
+                      arguments: existing.args
+                    }
+                  });
+                } catch (e) {
+                  const completedArgs = tryCompleteJSON(existing.args);
+                  toolCalls.push({
+                    id: existing.id || 'unknown',
+                    type: 'function',
+                    function: {
+                      name: existing.name || 'unknown',
+                      arguments: completedArgs
+                    }
+                  });
                 }
-                dispatch(updateAiMessage(updateData));
               }
 
-              if (parsedChunk.tool_call_chunks && parsedChunk.tool_call_chunks.length > 0) {
-                for (const chunk of parsedChunk.tool_call_chunks) {
-                  const index = chunk.index ?? 0;
-                  if (!toolCallChunksMap.has(index)) {
-                    toolCallChunksMap.set(index, { args: '' });
-                  }
-                  const existing = toolCallChunksMap.get(index)!;
-                  if (chunk.name) {
-                    (existing as any).name = chunk.name;
-                  }
-                  if (chunk.args) {
-                    existing.args += chunk.args;
-                  }
-                  if (chunk.id !== null && chunk.id !== undefined) {
-                    (existing as any).id = chunk.id;
-                  }
-                }
+              if (currentAiMessageId && toolCalls.length > 0) {
+                dispatch(updateAiMessage({ id: currentAiMessageId, content: newAiResponse, tool_calls: toolCalls }));
+              }
 
-                const toolCalls: ToolCall[] = [];
-                for (const [index, existing] of toolCallChunksMap.entries()) {
-                  try {
-                    const args = JSON.parse(existing.args);
-                    toolCalls.push({
-                      id: (existing as any).id || 'unknown',
-                      name: (existing as any).name || 'unknown',
-                      args: args,
-                      type: 'tool_call'
-                    });
-                  } catch (e) {
-                    const completedArgs = tryCompleteJSON(existing.args);
-                    toolCalls.push({
-                      id: (existing as any).id || 'unknown',
-                      name: (existing as any).name || 'unknown',
-                      args: { _loading: true, _partial_args: completedArgs },
-                      type: 'tool_call'
-                    });
-                  }
-                }
-
-                dispatch(updateAiMessage({
-                  id: currentAiMessageId!,
-                  content: newAiResponse,
-                  tool_calls: toolCalls
-                }));
-
-                processFileToolCalls(toolCalls);
+              const completeToolCalls = toolCalls.filter(tc => {
+                try { JSON.parse(tc.function.arguments); return true; } catch { return false; }
+              });
+              if (completeToolCalls.length > 0) {
+                processFileToolCalls(completeToolCalls);
               }
             }
           } catch (e) {
@@ -292,10 +288,6 @@ const MessageDisplayPanel = () => {
           }
         }
       }
-
-      // 重新生成完成后，刷新state
-      const stateData = await httpClient.get('/api/chat/state');
-      dispatch(setState(stateData));
     } catch (error) {
       console.error('重新生成消息失败:', error);
       setModal({ show: true, message: (error as Error).toString(), onConfirm: null, onCancel: null });
@@ -311,31 +303,28 @@ const MessageDisplayPanel = () => {
     setEditingContent(content);
   };
 
-  // 确认编辑并重新生成
-  const confirmEdit = async (msgId: string, newContent: string, messageType: 'human' | 'ai') => {
+  // 确认编辑并重新生成（调用 /api/chat2/regenerate 带 edited_content）
+  const confirmEdit = async (msgId: string, newContent: string) => {
     try {
       setEditingMessageId(null);
       setEditingContent('');
       dispatch(setIsStreaming(true));
 
-      const response = await httpClient.streamRequest('/api/history/regenerate/stream', {
+      // 立即截断当前节点之后的旧消息，避免旧内容残留
+      const msgIndex = messages.findIndex(m => m.id === msgId);
+      if (msgIndex !== -1) {
+        dispatch(updateMessages(messages.slice(0, msgIndex + 1)));
+      }
+
+      const response = await httpClient.streamRequest('/api/chat2/regenerate', {
         method: 'POST',
-        body: {
-          thread_id: threadId,
-          message_id: msgId,
-          new_content: newContent,
-          message_type: messageType
-        }
+        body: { msg_id: msgId, edited_content: newContent }
       });
 
-      if (!response.ok) {
-        throw new Error('编辑并重新生成请求失败');
-      }
+      if (!response.ok) throw new Error('编辑并重新生成请求失败');
 
       const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error('无法获取响应流');
-      }
+      if (!reader) throw new Error('无法获取响应流');
 
       const decoder = new TextDecoder();
       let currentAiMessageId: string | null = null;
@@ -351,90 +340,92 @@ const MessageDisplayPanel = () => {
         const lines = chunk.split('\n').filter(line => line.trim() !== '');
 
         for (const line of lines) {
-          try {
-            const parsedChunk = JSON.parse(line) as StreamChunk;
+          // 检查是否是 state_update
+          if (processStateUpdateLine(line)) {
+            dispatch(setIsStreaming(false));
+            break;
+          }
 
-            // 处理流式传输中断信号
+          try {
+            const parsedChunk = JSON.parse(line);
+
             if (parsedChunk.interrupted) {
               console.log("编辑后重新生成被中断");
               dispatch(setIsStreaming(false));
               break;
             }
 
-            if (parsedChunk.type === 'AIMessageChunk') {
-              if (!currentAiMessageId && parsedChunk.id) {
-                const messageId = parsedChunk.id;
-                currentAiMessageId = messageId;
-                dispatch(createAiMessage({ id: messageId }));
+            if (parsedChunk.type === 'state_update') {
+              dispatch(setMessagesTree({
+                messages: parsedChunk.messages,
+                active_leaf: parsedChunk.active_leaf,
+                active_path: parsedChunk.active_path,
+                branch_points: parsedChunk.branch_points,
+              }));
+              dispatch(setIsStreaming(false));
+              break;
+            }
+
+            if (!currentAiMessageId && (parsedChunk.content || parsedChunk.tool_calls?.length)) {
+              const aiMessageId = generateMessageId();
+              currentAiMessageId = aiMessageId;
+              dispatch(createAiMessage({ id: aiMessageId }));
+            }
+
+            if (parsedChunk.content) newAiResponse += parsedChunk.content;
+            if (parsedChunk.reasoning_content) newReasoningContent += parsedChunk.reasoning_content;
+
+            if (currentAiMessageId && (parsedChunk.content || parsedChunk.reasoning_content)) {
+              const updateData: any = { id: currentAiMessageId, content: newAiResponse };
+              if (newReasoningContent) updateData.reasoning_content = newReasoningContent;
+              dispatch(updateAiMessage(updateData));
+            }
+
+            // 流式 tool_calls
+            if (parsedChunk.tool_calls && parsedChunk.tool_calls.length > 0) {
+              for (const tc of parsedChunk.tool_calls) {
+                const index = tc.index ?? 0;
+                toolCallChunksMap.set(index, {
+                  id: tc.id || toolCallChunksMap.get(index)?.id || '',
+                  name: tc.function?.name || toolCallChunksMap.get(index)?.name || '',
+                  args: tc.function?.arguments || ''
+                });
               }
 
-              if (parsedChunk.content) {
-                newAiResponse += parsedChunk.content;
-              }
-
-              // 处理 reasoning_content
-              if (parsedChunk.additional_kwargs?.reasoning_content) {
-                newReasoningContent += parsedChunk.additional_kwargs.reasoning_content as string;
-              }
-
-              // 有content或reasoning_content时立即更新，实现流式渲染
-              if (currentAiMessageId) {
-                const updateData: any = {
-                  id: currentAiMessageId,
-                  content: newAiResponse
-                };
-                if (newReasoningContent) {
-                  updateData.reasoning_content = newReasoningContent;
+              const toolCalls: ToolCall[] = [];
+              for (const [, existing] of toolCallChunksMap.entries()) {
+                try {
+                  JSON.parse(existing.args);
+                  toolCalls.push({
+                    id: existing.id || 'unknown',
+                    type: 'function',
+                    function: {
+                      name: existing.name || 'unknown',
+                      arguments: existing.args
+                    }
+                  });
+                } catch (e) {
+                  const completedArgs = tryCompleteJSON(existing.args);
+                  toolCalls.push({
+                    id: existing.id || 'unknown',
+                    type: 'function',
+                    function: {
+                      name: existing.name || 'unknown',
+                      arguments: completedArgs
+                    }
+                  });
                 }
-                dispatch(updateAiMessage(updateData));
               }
 
-              if (parsedChunk.tool_call_chunks && parsedChunk.tool_call_chunks.length > 0) {
-                for (const chunk of parsedChunk.tool_call_chunks) {
-                  const index = chunk.index ?? 0;
-                  if (!toolCallChunksMap.has(index)) {
-                    toolCallChunksMap.set(index, { args: '' });
-                  }
-                  const existing = toolCallChunksMap.get(index)!;
-                  if (chunk.name) {
-                    (existing as any).name = chunk.name;
-                  }
-                  if (chunk.args) {
-                    existing.args += chunk.args;
-                  }
-                  if (chunk.id !== null && chunk.id !== undefined) {
-                    (existing as any).id = chunk.id;
-                  }
-                }
+              if (currentAiMessageId && toolCalls.length > 0) {
+                dispatch(updateAiMessage({ id: currentAiMessageId, content: newAiResponse, tool_calls: toolCalls }));
+              }
 
-                const toolCalls: ToolCall[] = [];
-                for (const [index, existing] of toolCallChunksMap.entries()) {
-                  try {
-                    const args = JSON.parse(existing.args);
-                    toolCalls.push({
-                      id: (existing as any).id || 'unknown',
-                      name: (existing as any).name || 'unknown',
-                      args: args,
-                      type: 'tool_call'
-                    });
-                  } catch (e) {
-                    const completedArgs = tryCompleteJSON(existing.args);
-                    toolCalls.push({
-                      id: (existing as any).id || 'unknown',
-                      name: (existing as any).name || 'unknown',
-                      args: { _loading: true, _partial_args: completedArgs },
-                      type: 'tool_call'
-                    });
-                  }
-                }
-
-                dispatch(updateAiMessage({
-                  id: currentAiMessageId!,
-                  content: newAiResponse,
-                  tool_calls: toolCalls
-                }));
-
-                processFileToolCalls(toolCalls);
+              const completeToolCalls = toolCalls.filter(tc => {
+                try { JSON.parse(tc.function.arguments); return true; } catch { return false; }
+              });
+              if (completeToolCalls.length > 0) {
+                processFileToolCalls(completeToolCalls);
               }
             }
           } catch (e) {
@@ -442,10 +433,6 @@ const MessageDisplayPanel = () => {
           }
         }
       }
-
-      // 编辑完成后，刷新state
-      const stateData = await httpClient.get('/api/chat/state');
-      dispatch(setState(stateData));
     } catch (error) {
       console.error('编辑消息失败:', error);
       setModal({ show: true, message: (error as Error).toString(), onConfirm: null, onCancel: null });
@@ -458,6 +445,19 @@ const MessageDisplayPanel = () => {
   const cancelEdit = () => {
     setEditingMessageId(null);
     setEditingContent('');
+  };
+
+  // 切换分支
+  const switchBranch = async (parentMsgId: string, targetMsgId: string) => {
+    try {
+      const result = await httpClient.post('/api/chat2/switch-branch', {
+        parent_msg_id: parentMsgId,
+        target_msg_id: targetMsgId
+      });
+      dispatch(setMessagesTree(result));
+    } catch (error) {
+      setModal({ show: true, message: (error as Error).toString(), onConfirm: null, onCancel: null });
+    }
   };
 
   // 获取预览内容（第一行或前几个字）
@@ -479,16 +479,21 @@ const MessageDisplayPanel = () => {
     
     return parts.map((part, index) => {
       if (part.startsWith('@') && part.length > 1) {
-        // 这是文件路径引用，使用theme-gray3高亮
         return (
           <span key={index} className="text-theme-gray3">
             {part}
           </span>
         );
       }
-      // 普通文本
       return <span key={index}>{part}</span>;
     });
+  };
+
+  // 获取消息所在分支点信息
+  const getBranchPointForMsg = (msgId: string): BranchPoint | undefined => {
+    const result = branchPoints.find(bp => bp.variants.includes(msgId));
+    console.log('[分支调试] getBranchPointForMsg msgId:', msgId, 'found:', result ? JSON.stringify(result) : 'undefined');
+    return result;
   };
 
   // 当消息列表变化时自动滚动到底部
@@ -500,9 +505,13 @@ const MessageDisplayPanel = () => {
 
   // 渲染消息
   const renderMessage = (msg: Message) => {
-    const isUser = msg.type === 'human';
-    const isToolResult = msg.type === 'tool';
+    const isUser = msg.role === 'user';
+    const isToolResult = msg.role === 'tool';
     const isEditing = editingMessageId === msg.id;
+    const bpInfo = isUser ? getBranchPointForMsg(msg.id) : undefined;
+    if (isUser) {
+      console.log('[分支调试] renderMessage msg.id:', msg.id, 'isUser:', isUser, 'bpInfo:', bpInfo ? JSON.stringify(bpInfo) : 'undefined', 'isEditing:', isEditing);
+    }
     
     // 工具结果消息独立渲染
     if (isToolResult) {
@@ -532,7 +541,7 @@ const MessageDisplayPanel = () => {
     }
     
     // 用户消息、AI消息
-    const usageMetadata = msg.type === 'ai' ? (msg as AIMessage).usage_metadata : null;
+    const usageMetadata = msg.role === 'assistant' ? msg.usage_metadata : null;
     const inputTokens = usageMetadata?.input_tokens || 0;
     const outputTokens = usageMetadata?.output_tokens || 0;
     
@@ -575,7 +584,7 @@ const MessageDisplayPanel = () => {
                   </button>
                   <button
                     className="px-4 py-2 rounded-small bg-theme-green text-theme-white hover:bg-theme-green1 transition-colors"
-                    onClick={() => confirmEdit(msg.id, editingContent, isUser ? 'human' : 'ai')}
+                    onClick={() => confirmEdit(msg.id, editingContent)}
                   >
                     确定并重新生成
                   </button>
@@ -587,7 +596,7 @@ const MessageDisplayPanel = () => {
                   <div className="whitespace-pre-wrap">{renderUserMessageContent(msg.content || '')}</div>
                 ) : (
                   <div>
-                    {msg.type === 'ai' && Boolean((msg as AIMessage).additional_kwargs?.reasoning_content) && (
+                    {msg.role === 'assistant' && Boolean(msg.additional_kwargs?.reasoning_content) && (
                       <div className="mt-2 p-2 bg-black/20 rounded-small">
                         <div className="flex items-center gap-2">
                           <FontAwesomeIcon
@@ -599,19 +608,26 @@ const MessageDisplayPanel = () => {
                         </div>
                         {expandedReasonings.has(msg.id) && (
                           <div className="mt-1 text-[0.8em] text-theme-white whitespace-pre-wrap break-words">
-                            {(msg as AIMessage).additional_kwargs.reasoning_content as string}
+                            {msg.additional_kwargs?.reasoning_content as string}
                           </div>
                         )}
                       </div>
                     )}
                     <div className="whitespace-pre-wrap">{msg.content}</div>
-                    {msg.type === 'ai' && (msg as AIMessage).tool_calls && (msg as AIMessage).tool_calls.length > 0 && (
+                    {msg.role === 'assistant' && msg.tool_calls && msg.tool_calls.length > 0 && (
                       <div className="mt-2 p-2 bg-black/20 rounded-small">
-                        {(msg as AIMessage).tool_calls.map((toolCall, toolIndex) => {
+                        {msg.tool_calls!.map((toolCall, toolIndex) => {
                           const toolKey = `${msg.id}-${toolIndex}`;
-                          const isExpanded = !expandedTools.has(toolKey); // 默认展开（未在集合中即为展开）
-                          const args = toolCall.args;
-                          const path = args && typeof args === 'object' && 'path' in args ? (args as any).path : null;
+                          const isExpanded = !expandedTools.has(toolKey);
+                          const tcName = toolCall.function?.name || '';
+                          const tcArgsStr = toolCall.function?.arguments || '';
+                          let parsedArgs: any = {};
+                          let isArgsValid = false;
+                          try {
+                            parsedArgs = JSON.parse(tcArgsStr);
+                            isArgsValid = true;
+                          } catch { /* 参数未完整，使用原始字符串 */ }
+                          const path = isArgsValid && parsedArgs && typeof parsedArgs === 'object' && 'path' in parsedArgs ? parsedArgs.path : null;
                           
                           return (
                             <div key={toolIndex} className="mb-1.5 p-1 bg-black/10 rounded-small">
@@ -622,7 +638,7 @@ const MessageDisplayPanel = () => {
                                   onClick={() => toggleToolExpand(msg.id, toolIndex)}
                                 />
                                 <span className="font-bold text-theme-green">
-                                  {availableTools[toolCall.name || '']?.name || toolCall.name || '未知工具'}
+                                  {availableTools[tcName]?.name || tcName || '未知工具'}
                                 </span>
                                 {path && (
                                   <span className="text-xs text-theme-gray3">
@@ -630,28 +646,23 @@ const MessageDisplayPanel = () => {
                                   </span>
                                 )}
                               </div>
-                              {isExpanded && args && (
+                              {isExpanded && tcArgsStr && (
                                 <div className="mt-1 text-[0.8em] text-theme-white whitespace-pre-wrap break-words">
-                                  {(() => {
-                                    const parsedArgs = typeof args === 'string' ? JSON.parse(args) : args;
-                                    
-                                    return (args as any)._loading
-                                      ? `加载中... ${(args as any)._partial_args || ''}`
-                                      : (() => {
-                                          const content = parsedArgs.content;
-                                          if (content !== undefined) {
-                                            return content;
-                                          }
-                                          // 如果没有content，显示所有键值对，但排除content键（如果存在）
-                                          const result: Record<string, any> = {};
-                                          for (const [key, value] of Object.entries(parsedArgs)) {
-                                            if (key !== 'content') {
-                                              result[key] = value;
-                                            }
-                                          }
-                                          return JSON.stringify(result, null, 2);
-                                        })();
-                                  })()}
+                                  {!isArgsValid ? (
+                                    `加载中... ${tcArgsStr}`
+                                  ) : (() => {
+                                      const content = parsedArgs.content;
+                                      if (content !== undefined) {
+                                        return content;
+                                      }
+                                      const result: Record<string, any> = {};
+                                      for (const [key, value] of Object.entries(parsedArgs)) {
+                                        if (key !== 'content') {
+                                          result[key] = value;
+                                        }
+                                      }
+                                      return JSON.stringify(result, null, 2);
+                                    })()}
                                 </div>
                               )}
                             </div>
@@ -681,7 +692,7 @@ const MessageDisplayPanel = () => {
               {isUser && !isInterrupted && (
                 <button
                   className="text-xs flex items-center gap-1 text-theme-gray3 hover:text-theme-green transition-colors"
-                  onClick={() => regenerateMessage(msg.id, 'human')}
+                  onClick={() => regenerateMessage(msg.id)}
                   title="重新生成"
                 >
                   <FontAwesomeIcon icon={faRotateRight} />
@@ -715,9 +726,52 @@ const MessageDisplayPanel = () => {
             )}
           </div>
         )}
+
+        {/* 分支翻页器（仅对用户消息且是分支点显示） */}
+        {isUser && bpInfo && bpInfo.total > 1 && !isEditing && (
+          <div className="flex items-center justify-center gap-2 mt-1">
+            <button
+              className="text-xs text-theme-gray3 hover:text-theme-green transition-colors disabled:opacity-30"
+              disabled={bpInfo.current_index === 0}
+              onClick={() => {
+                const prevIdx = bpInfo.current_index - 1;
+                const target = bpInfo.variants[prevIdx];
+                if (prevIdx >= 0 && target) {
+                  switchBranch(bpInfo.at_msg_id, target);
+                }
+              }}
+            >
+              <FontAwesomeIcon icon={faChevronLeft} />
+            </button>
+            <span className="text-xs text-theme-gray3">
+              {bpInfo.current_index + 1}/{bpInfo.total}
+            </span>
+            <button
+              className="text-xs text-theme-gray3 hover:text-theme-green transition-colors disabled:opacity-30"
+              disabled={bpInfo.current_index >= bpInfo.total - 1}
+              onClick={() => {
+                const nextIdx = bpInfo.current_index + 1;
+                const target = bpInfo.variants[nextIdx];
+                if (nextIdx < bpInfo.total && target) {
+                  switchBranch(bpInfo.at_msg_id, target);
+                }
+              }}
+            >
+              <FontAwesomeIcon icon={faChevronRight} />
+            </button>
+          </div>
+        )}
       </div>
     );
   };
+
+  if (!chatState?.values?.messages) {
+    return (
+      <div className="flex-1 overflow-y-auto p-2.5 flex flex-col items-center justify-center text-theme-gray3">
+        <p>选择或创建一个会话开始对话</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 overflow-y-auto p-2.5 flex flex-col relative">

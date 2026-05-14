@@ -1,11 +1,22 @@
-// LangGraph State类型定义 - 直接对应后端序列化后的结构
+// OpenAI/LiteLLM 消息格式类型定义
 
-// 工具调用（从AIMessage中）
+// 工具调用（OpenAI 标准格式）
 export interface ToolCall {
-  name: string;
-  args: Record<string, unknown>;
   id: string;
   type: string;
+  function: {
+    name: string;
+    arguments: string;  // JSON 字符串
+  };
+}
+
+// 分支点信息（后端计算后返回）
+export interface BranchPoint {
+  at_msg_id: string;
+  variants: string[];
+  active: string;
+  current_index: number;
+  total: number;
 }
 
 // 无效工具调用
@@ -36,36 +47,23 @@ export interface ResponseMetadata {
   model_provider?: string;
 }
 
-// 基础消息接口
-export interface BaseMessage {
+// OpenAI 格式消息
+export interface OpenAIMessage {
+  role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
-  additional_kwargs: Record<string, unknown>;
-  response_metadata: ResponseMetadata;
   id: string;
-  type: 'human' | 'ai' | 'tool' | 'unknown';
-}
-
-// HumanMessage
-export interface HumanMessage extends BaseMessage {
-  type: 'human';
-}
-
-// AIMessage
-export interface AIMessage extends BaseMessage {
-  type: 'ai';
-  tool_calls: ToolCall[];
-  invalid_tool_calls: InvalidToolCall[];
-  usage_metadata?: UsageMetadata;
-}
-
-// ToolMessage
-export interface ToolMessage extends BaseMessage {
-  type: 'tool';
+  parent_id?: string | null;
+  tool_calls?: ToolCall[];
   tool_call_id?: string;
+  name?: string;
+  additional_kwargs?: Record<string, unknown>;
+  response_metadata?: ResponseMetadata;
+  usage_metadata?: UsageMetadata;
+  invalid_tool_calls?: InvalidToolCall[];
 }
 
 // 消息联合类型
-export type Message = HumanMessage | AIMessage | ToolMessage;
+export type Message = OpenAIMessage;
 
 // 中断值
 export interface InterruptValue {
@@ -80,6 +78,17 @@ export interface InterruptValue {
 export interface Interrupt {
   id: string;
   value: InterruptValue;
+}
+
+// 工具请求数据（来自后端 tool_requests 表）
+export interface ToolRequestData {
+  tool_call_id: string;
+  tool_name: string;
+  arguments?: string;
+  notified: boolean;
+  approved: boolean | null;
+  user_extra: string | null;
+  result: { success: boolean; detail: string } | null;
 }
 
 // 中断响应接口
@@ -118,7 +127,7 @@ export interface StateMetadata {
   user_id: string;
 }
 
-// LangGraph State
+// LangGraph State（保留结构但消息改为OpenAI格式）
 export interface LangGraphState {
   values: {
     messages: Message[];
