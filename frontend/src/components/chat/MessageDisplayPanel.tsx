@@ -41,9 +41,6 @@ const MessageDisplayPanel = () => {
   const chatState = useSelector((state: RootState) => state.chatSlice.state);
   const branchPoints = useSelector((state: RootState) => state.chatSlice.branchPoints || []);
   const allMessages = useSelector((state: RootState) => state.chatSlice.allMessages || []);
-  console.log('[分支调试] branchPoints:', JSON.stringify(branchPoints));
-  console.log('[分支调试] allMessages count:', allMessages.length);
-  
   // 从Redux获取thread_id和mode
   const threadId = useSelector((state: RootState) => state.chatSlice.selectedThreadId) || 'default';
   const selectedModeId = useSelector((state: RootState) => state.modeSlice.selectedModeId) || '管家agent';
@@ -501,7 +498,6 @@ const MessageDisplayPanel = () => {
   // 获取消息所在分支点信息
   const getBranchPointForMsg = (msgId: string): BranchPoint | undefined => {
     const result = branchPoints.find(bp => bp.variants.includes(msgId));
-    console.log('[分支调试] getBranchPointForMsg msgId:', msgId, 'found:', result ? JSON.stringify(result) : 'undefined');
     return result;
   };
 
@@ -518,10 +514,6 @@ const MessageDisplayPanel = () => {
     const isToolResult = msg.role === 'tool';
     const isEditing = editingMessageId === msg.id;
     const bpInfo = isUser ? getBranchPointForMsg(msg.id) : undefined;
-    if (isUser) {
-      console.log('[分支调试] renderMessage msg.id:', msg.id, 'isUser:', isUser, 'bpInfo:', bpInfo ? JSON.stringify(bpInfo) : 'undefined', 'isEditing:', isEditing);
-    }
-    
     // 工具结果消息独立渲染
     if (isToolResult) {
       const isExpanded = expandedToolResults.has(msg.id);

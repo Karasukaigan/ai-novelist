@@ -11,7 +11,7 @@ import TwoStepRagPanel from './two-step-rag/TwoStepRagPanel';
 import ContextProgressBar from './ContextProgressBar';
 import MessageInputPanel from './MessageInputPanel';
 import MiddlePart from './MiddlePart';
-import { setState, setSelectedThreadId, setMessagesTree, createAiMessage, updateAiMessage, setIsStreaming } from '../../store/chat';
+import { setState, setSelectedThreadId, setCurrentToolRequest, setMessage, setMessagesTree, createAiMessage, updateAiMessage, setIsStreaming } from '../../store/chat';
 import type { RootState } from '../../types';
 import httpClient from '../../utils/httpClient';
 
@@ -26,6 +26,8 @@ const ChatPanel = () => {
   const handleNewThread = () => {
     dispatch(setState(null));
     dispatch(setSelectedThreadId(null));
+    dispatch(setCurrentToolRequest(null));
+    dispatch(setMessage(''));
     console.log("回到初始状态");
   };
   // 压缩上下文

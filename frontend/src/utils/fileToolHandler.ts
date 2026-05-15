@@ -250,9 +250,12 @@ export const useFileToolHandler = () => {
         const pattern = parsedArgs.pattern;
         const replace = parsedArgs.replace;
         
-        // 只有在有替换参数时才在前端预览
+        // 只有在有替换参数时才在前端创建差异对比预览
         if (pattern !== undefined && replace !== undefined) {
           modifiedContent = searchAndReplace(originalContent, pattern, replace, true, false);
+        } else {
+          // 纯搜索（无replace）不创建差异对比标签
+          return;
         }
         break;
       }

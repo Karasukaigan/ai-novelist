@@ -262,8 +262,9 @@ export const chatSlice = createSlice({
       branch_points: BranchPoint[];
       summaries?: Summary[];
       thread_id?: string;
+      tool_requests?: Record<string, ToolRequestData>;
     }>) => {
-      const { messages, active_leaf, active_path, branch_points, summaries, thread_id } = action.payload;
+      const { messages, active_leaf, active_path, branch_points, summaries, thread_id, tool_requests } = action.payload;
       if (summaries !== undefined) {
         state.summaries = summaries;
       }
@@ -295,6 +296,27 @@ export const chatSlice = createSlice({
             messages: active_path,
           },
         };
+      }
+
+      // 处理 tool_requests：如果有待审批的请求，设置 currentToolRequest
+      if (tool_requests !== undefined) {
+        const pendingEntry = Object.entries(tool_requests as Record<string, ToolRequestData>).find(([_, tr]) => tr.approved === null);
+        if (pendingEntry) {
+          const [tool_call_id, info] = pendingEntry;
+          state.currentToolRequest = {
+            tool_call_id,
+            tool_name: info.tool_name,
+            arguments: info.arguments || "{}",
+            notified: true,
+            approved: null,
+            user_extra: null,
+            result: null,
+          };
+          state.toolRequestVisible = true;
+        } else {
+          state.currentToolRequest = null;
+          state.toolRequestVisible = false;
+        }
       }
     },
   },

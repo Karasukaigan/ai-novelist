@@ -19,11 +19,6 @@ from fastapi.responses import StreamingResponse
 
 logger = logging.getLogger(__name__)
 
-mode = settings.get_config("currentMode", default="管家agent")
-selected_model = settings.get_config("selectedModel")
-selected_provider = settings.get_config("selectedProvider")
-temperature = settings.get_config("mode", mode, "temperature")
-max_tokens = settings.get_config("mode", mode, "max_tokens")
 # 确保数据库表已创建
 init_db()
 
@@ -214,11 +209,17 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
         parent_msg_id: AI 回复消息的 parent_id（通常是上一条用户消息 id）
         history: 发送给 AI 的活跃路径消息列表（已含注入上下文）
     """
-    api_key = settings.get_provider_key(selected_provider)
-    base_url = settings.get_config("provider", selected_provider, "url", default="")
-    litellm_model = f"{_get_model_prefix(selected_provider)}/{selected_model}"
+    _mode = settings.get_config("currentMode", default="管家agent")
+    _selected_model = settings.get_config("selectedModel")
+    _selected_provider = settings.get_config("selectedProvider")
+    _temperature = settings.get_config("mode", _mode, "temperature")
+    _max_tokens = settings.get_config("mode", _mode, "max_tokens")
 
-    tool_dict = await import_tools(mode=mode)
+    api_key = settings.get_provider_key(_selected_provider)
+    base_url = settings.get_config("provider", _selected_provider, "url", default="")
+    litellm_model = f"{_get_model_prefix(_selected_provider)}/{_selected_model}"
+
+    tool_dict = await import_tools(mode=_mode)
     tools = None
     if tool_dict:
         tools = [_tool_to_openai_schema(t) for t in tool_dict.values()]
@@ -237,19 +238,19 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
 
     # 裁剪超限消息
     context_window = settings.get_config(
-        "provider", selected_provider, "favoriteModels", "chat", selected_model
+        "provider", _selected_provider, "favoriteModels", "chat", _selected_model
     ) or 4096
-    trimmed_history = _trim_history(filtered_history, context_window - max_tokens)
+    trimmed_history = _trim_history(filtered_history, context_window - _max_tokens)
 
     messages_with_context = await _build_messages_with_context(
-        trimmed_history, mode, user_input, summaries
+        trimmed_history, _mode, user_input, summaries
     )
 
     call_kwargs = {
         "model": litellm_model,
         "messages": messages_with_context,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
+        "temperature": _temperature,
+        "max_tokens": _max_tokens,
         "timeout": 300,
         "stream": True,
         "stream_options": {"include_usage": True},
@@ -292,7 +293,6 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
         if hasattr(delta, 'content') and delta.content:
             chunk_data["content"] = delta.content
             full_content += delta.content
-            print(delta.content, end="|", flush=True)
 
         if hasattr(delta, 'reasoning_content') and delta.reasoning_content:
             chunk_data["reasoning_content"] = delta.reasoning_content
@@ -342,6 +342,8 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
         assistant_msg["tool_calls"] = list(tool_calls_accumulated.values())
     if usage_metadata:
         assistant_msg["usage_metadata"] = usage_metadata
+
+    print(full_content, flush=True)
 
     data = storage.get_data(thread_id)
     data.setdefault("messages", []).append(assistant_msg)
@@ -479,7 +481,8 @@ async def function_calling(request: FunctionCallingRequest):
     result = None
     if request.approved:
         tr_info = storage.get_data(thread_id).get("tool_requests", {}).get(request.tool_call_id, {})
-        tool_dict = await import_tools(mode=mode)
+        _mode = settings.get_config("currentMode", default="管家agent")
+        tool_dict = await import_tools(mode=_mode)
         result = await _execute_tool(tool_dict, tr_info.get("tool_name", ""), tr_info.get("arguments", "{}"))
     else:
         result = {"success": False, "detail": "用户取消了工具调用"}
@@ -595,15 +598,20 @@ async def summarize_context(request: SummarizeRequest):
     summarize_messages.append({"role": "user", "content": prompt})
 
     # 调用总结模型
-    api_key = settings.get_provider_key(selected_provider)
-    base_url = settings.get_config("provider", selected_provider, "url", default="")
-    litellm_model = f"{_get_model_prefix(selected_provider)}/{selected_model}"
+    _mode = settings.get_config("currentMode", default="管家agent")
+    _selected_model = settings.get_config("selectedModel")
+    _selected_provider = settings.get_config("selectedProvider")
+    _temperature = settings.get_config("mode", _mode, "temperature")
+
+    api_key = settings.get_provider_key(_selected_provider)
+    base_url = settings.get_config("provider", _selected_provider, "url", default="")
+    litellm_model = f"{_get_model_prefix(_selected_provider)}/{_selected_model}"
 
     try:
         response = await acompletion(
             model=litellm_model,
             messages=summarize_messages,
-            temperature=temperature,
+            temperature=_temperature,
             max_tokens=1024,
             timeout=120,
             api_key=api_key,

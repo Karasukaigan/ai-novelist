@@ -194,10 +194,7 @@ def _compute_branch_points(messages: list, active_leaf: str | None) -> list[dict
     """
     import logging
     logger = logging.getLogger(__name__)
-    logger.info(f"[分支调试] _compute_branch_points 收到 {len(messages)} 条消息")
-    for m in messages:
-        logger.info(f"[分支调试]   消息 id={m.get('id')}, parent_id={m.get('parent_id')}, role={m.get('role')}")
-    
+
     if not messages:
         return []
 
@@ -228,8 +225,6 @@ def _compute_branch_points(messages: list, active_leaf: str | None) -> list[dict
             current_id = msg.get("parent_id")
 
     branch_points = []
-    logger.info(f"[分支调试] parent_children 关系: {parent_children}")
-    logger.info(f"[分支调试] active_leaf={active_leaf}, active_path_ids={active_path_ids}")
     for pid, children in parent_children.items():
         if len(children) > 1:
             active = next((c for c in children if c in active_path_ids), children[-1])
@@ -242,7 +237,6 @@ def _compute_branch_points(messages: list, active_leaf: str | None) -> list[dict
                 "total": len(children),
             })
 
-    logger.info(f"[分支调试] 计算出的 branch_points: {branch_points}")
     return branch_points
 
 
@@ -319,7 +313,7 @@ def switch_branch(thread_id: str, parent_msg_id: str, target_msg_id: str) -> dic
 def get_full_tree(thread_id: str) -> dict:
     """
     返回完整树信息给前端。
-    { messages, active_leaf, branch_points, active_path }
+    { messages, active_leaf, branch_points, active_path, tool_requests }
     active_path 是后端计算好的当前活跃路径消息列表，前端直接用于渲染。
     """
     data = get_data(thread_id)
@@ -332,6 +326,7 @@ def get_full_tree(thread_id: str) -> dict:
         "active_leaf": active_leaf,
         "active_path": active_path,
         "branch_points": branch_points,
+        "tool_requests": data.get("tool_requests", {}),
     }
 
 
