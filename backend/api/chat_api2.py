@@ -155,7 +155,7 @@ def _build_state_update_data(thread_id: str) -> str:
         "active_leaf": tree["active_leaf"],
         "active_path": tree["active_path"],
         "branch_points": tree["branch_points"],
-        "tool_requests": data.get("tool_requests", {}),
+        "tool_requests": tree["tool_requests"],
         "summaries": data.get("summaries", []),
     }, ensure_ascii=False) + "\n"
 
@@ -349,9 +349,8 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
     data.setdefault("messages", []).append(assistant_msg)
 
     if tool_calls_accumulated:
-        data["tool_requests"] = {}
         for tc in tool_calls_accumulated.values():
-            data["tool_requests"][tc["id"]] = {
+            data.setdefault("tool_requests", {})[tc["id"]] = {
                 "tool_name": tc["function"]["name"],
                 "arguments": tc["function"].get("arguments", "{}"),
                 "approved": None,

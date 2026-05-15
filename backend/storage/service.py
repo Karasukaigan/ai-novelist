@@ -310,23 +310,41 @@ def switch_branch(thread_id: str, parent_msg_id: str, target_msg_id: str) -> dic
     return get_full_tree(thread_id)
 
 
+def _get_active_tool_call_ids(active_path: list[dict]) -> set[str]:
+    """收集活跃路径上所有 assistant 消息中 tool_calls 的 id"""
+    ids: set[str] = set()
+    for msg in active_path:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                if tc.get("id"):
+                    ids.add(tc["id"])
+    return ids
+
+
 def get_full_tree(thread_id: str) -> dict:
     """
     返回完整树信息给前端。
     { messages, active_leaf, branch_points, active_path, tool_requests }
     active_path 是后端计算好的当前活跃路径消息列表，前端直接用于渲染。
+    tool_requests 仅包含活跃路径上 assistant 消息的 tool_calls 对应的条目。
     """
     data = get_data(thread_id)
     messages = data.get("messages", [])
     active_leaf = data.get("active_leaf")
     active_path = _get_active_path(messages, active_leaf)
     branch_points = _compute_branch_points(messages, active_leaf)
+
+    # 只返回活跃路径关联的 tool_requests
+    all_tr = data.get("tool_requests", {})
+    active_ids = _get_active_tool_call_ids(active_path)
+    filtered_tr = {k: v for k, v in all_tr.items() if k in active_ids}
+
     return {
         "messages": messages,
         "active_leaf": active_leaf,
         "active_path": active_path,
         "branch_points": branch_points,
-        "tool_requests": data.get("tool_requests", {}),
+        "tool_requests": filtered_tr,
     }
 
 

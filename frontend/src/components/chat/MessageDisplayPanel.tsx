@@ -5,7 +5,7 @@ import { faAngleRight, faAngleUp, faTrash, faRotateRight, faEdit, faCopy, faChec
 import type { RootState } from '../../types';
 import type { Message, StreamChunk, ToolCall, BranchPoint } from '../../types/langgraph';
 import { setAvailableTools } from '../../store/mode';
-import { createAiMessage, updateAiMessage, updateMessages, setIsStreaming, setMessagesTree } from '../../store/chat';
+import { createAiMessage, updateAiMessage, updateMessages, setIsStreaming, setMessagesTree, setCurrentToolRequest } from '../../store/chat';
 import httpClient from '../../utils/httpClient';
 import UnifiedModal from '../others/UnifiedModal';
 import { tryCompleteJSON } from '../../utils/jsonUtils';
@@ -148,6 +148,7 @@ const MessageDisplayPanel = () => {
           active_leaf: parsed.active_leaf,
           active_path: parsed.active_path,
           branch_points: parsed.branch_points,
+          tool_requests: parsed.tool_requests,
         }));
         return true;
       }
@@ -160,6 +161,7 @@ const MessageDisplayPanel = () => {
   // 重新生成消息（调用 /api/chat2/regenerate）
   const regenerateMessage = async (msgId: string) => {
     try {
+      dispatch(setCurrentToolRequest(null));
       dispatch(setIsStreaming(true));
 
       // 立即截断当前节点之后的旧消息，避免旧内容残留
@@ -213,6 +215,7 @@ const MessageDisplayPanel = () => {
                 active_leaf: parsedChunk.active_leaf,
                 active_path: parsedChunk.active_path,
                 branch_points: parsedChunk.branch_points,
+                tool_requests: parsedChunk.tool_requests,
               }));
               dispatch(setIsStreaming(false));
               break;
@@ -314,12 +317,16 @@ const MessageDisplayPanel = () => {
     try {
       setEditingMessageId(null);
       setEditingContent('');
+      dispatch(setCurrentToolRequest(null));
       dispatch(setIsStreaming(true));
 
-      // 立即截断当前节点之后的旧消息，避免旧内容残留
+      // 在前端立即替换目标消息内容，避免用户看到旧内容
       const msgIndex = messages.findIndex(m => m.id === msgId);
       if (msgIndex !== -1) {
-        dispatch(updateMessages(messages.slice(0, msgIndex + 1)));
+        const updatedMessages = messages.map((m, i) =>
+          i === msgIndex ? { ...m, content: newContent } : m
+        );
+        dispatch(updateMessages(updatedMessages.slice(0, msgIndex + 1)));
       }
 
       const response = await httpClient.streamRequest('/api/chat2/regenerate', {
@@ -367,6 +374,7 @@ const MessageDisplayPanel = () => {
                 active_leaf: parsedChunk.active_leaf,
                 active_path: parsedChunk.active_path,
                 branch_points: parsedChunk.branch_points,
+                tool_requests: parsedChunk.tool_requests,
               }));
               dispatch(setIsStreaming(false));
               break;

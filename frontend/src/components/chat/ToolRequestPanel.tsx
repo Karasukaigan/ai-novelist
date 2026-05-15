@@ -108,33 +108,13 @@ const ToolRequestPanel = () => {
             }
 
             if (parsed.type === 'state_update') {
-              if (parsed.messages) {
-                dispatch(setMessagesTree({
-                  messages: parsed.messages,
-                  active_leaf: parsed.active_leaf,
-                  active_path: parsed.active_path,
-                  branch_points: parsed.branch_points,
-                }));
-              }
-              // 从 state_update 中检查待审批的工具请求
-              if (parsed.tool_requests) {
-                const trMap: Record<string, any> = parsed.tool_requests;
-                const pendingEntry = Object.entries(trMap).find(([_, tr]) => tr.approved === null);
-                if (pendingEntry) {
-                  const [tool_call_id, info] = pendingEntry;
-                  dispatch(setCurrentToolRequest({
-                    tool_call_id,
-                    tool_name: info.tool_name,
-                    arguments: info.arguments,
-                    notified: true,
-                    approved: null,
-                    user_extra: null,
-                    result: null,
-                  }));
-                } else {
-                  dispatch(setCurrentToolRequest(null));
-                }
-              }
+              dispatch(setMessagesTree({
+                messages: parsed.messages,
+                active_leaf: parsed.active_leaf,
+                active_path: parsed.active_path,
+                branch_points: parsed.branch_points,
+                tool_requests: parsed.tool_requests,
+              }));
               continue;
             }
 
