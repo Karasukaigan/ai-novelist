@@ -10,6 +10,7 @@ import type {
   ToolRequestData,
   UsageMetadata,
   BranchPoint,
+  Summary,
 } from '../types/langgraph';
 import type { ChatState } from '../types/store';
 
@@ -32,6 +33,7 @@ const initialState: ChatState = {
   allMessages: [],
   activeLeaf: null,
   branchPoints: [],
+  summaries: [],
 };
 
 export const chatSlice = createSlice({
@@ -258,9 +260,13 @@ export const chatSlice = createSlice({
       active_leaf: string | null;
       active_path: Message[];
       branch_points: BranchPoint[];
+      summaries?: Summary[];
       thread_id?: string;
     }>) => {
-      const { messages, active_leaf, active_path, branch_points, thread_id } = action.payload;
+      const { messages, active_leaf, active_path, branch_points, summaries, thread_id } = action.payload;
+      if (summaries !== undefined) {
+        state.summaries = summaries;
+      }
       state.allMessages = messages;
       state.activeLeaf = active_leaf;
       state.branchPoints = branch_points;

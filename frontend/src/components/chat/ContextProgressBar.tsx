@@ -15,9 +15,9 @@ const ContextProgressBar = () => {
     const lastAiMessage = messages.filter(msg => msg.role === 'assistant').pop();
     if (!lastAiMessage) return 0;
     
-    // 从usage_metadata获取
-    if (lastAiMessage.usage_metadata?.total_tokens) {
-      return lastAiMessage.usage_metadata.total_tokens;
+    // 从usage_metadata获取输入token数（即上下文实际占用）
+    if (lastAiMessage.usage_metadata?.input_tokens) {
+      return lastAiMessage.usage_metadata.input_tokens;
     }
     
     return 0;

@@ -2,99 +2,25 @@ from typing import Optional, List
 import requests
 import logging
 from backend.settings.settings import settings
-from backend.ai_agent.models.litellm_adapter import LiteLLMAdapter
 
 logger = logging.getLogger(__name__)
 
 class MultiModelAdapter:
     """
     多模型适配器
-    根据模型提供商类型选择合适的初始化方式
+    根据模型提供商类型获取可用模型列表
     """
-    
-    @staticmethod
-    def _get_model_prefix(provider: str) -> str:
-        """
-        获取模型名称的前缀
-        
-        规则:
-        - zhipuai: 使用 "zai/" 前缀
-        - deepseek, dashscope, openrouter, gemini, lm_studio, moonshot: 使用 provider 名作为前缀
-        - ollama: 使用 "ollama_chat/" 前缀,听说效果更好(尤其是ollama调用不了工具,ollama_chat反而可以)
-        - 其他: 统一使用 "openai/" 前缀
-        """
-        if provider == "zhipuai":
-            return "zai"
-        elif provider == "ollama":
-            return "ollama_chat"
-        elif provider in ["deepseek", "dashscope", "openrouter", "gemini", "lm_studio", "moonshot"]:
-            return provider
-        else:
-            return "openai"
-    
-    @classmethod
-    def create_model(
-        cls,
-        model: str,
-        provider: str,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        temperature: float = 0.7,
-        max_tokens: int = 4096,
-        timeout: int = 30, # 秒
-        **kwargs
-    ):
-        """
-        创建模型实例
-        
-        Args:
-            model: 模型名称
-            provider: 模型提供商
-            api_key: API密钥，如果为None则从配置中获取
-            base_url: API基础URL，如果为None则从配置中获取
-            temperature: 温度参数
-            max_tokens: 最大token数
-            timeout: 超时时间
-            **kwargs: 其他参数
-            
-        Returns:
-            模型实例
-        """
-        # 获取API密钥
-        if api_key is None:
-            api_key = settings.get_provider_key(provider)
-        
-        # 获取base_url
-        if base_url is None:
-            base_url = settings.get_config("provider", provider, "url", default="")
-        
-        print(f"初始化模型: {model}, 提供商: {provider}, base_url: {base_url}")
-        
-        # 使用LiteLLMAdapter作为统一适配器，支持100+ LLM提供商
-        # 根据提供商类型使用不同的前缀
-        model_prefix = cls._get_model_prefix(provider)
-        litellm_model = f"{model_prefix}/{model}"
-        
-        return LiteLLMAdapter(
-            model=litellm_model,
-            api_key=api_key,
-            base_url=base_url,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout,
-            **kwargs
-        )
 
     @classmethod
     def get_available_models(cls, provider: str, api_key: str = None, base_url: str = None) -> List[str]:
         """
         获取指定提供商的可用模型列表
-        
+
         Args:
             provider: 模型提供商
             api_key: API密钥
             base_url: API基础URL
-            
+
         Returns:
             模型ID列表
         """
@@ -123,7 +49,7 @@ class MultiModelAdapter:
                     model_name = model_data.get("name", "")
                     # 保留完整的模型名称，包括标签（如 qwen3:0.6b）
                     # 不再截断冒号后的部分
-                    
+
                     models.append(model_name)
                 return models
             else:
@@ -139,11 +65,11 @@ class MultiModelAdapter:
         try:
             if not api_key:
                 raise Exception("API密钥不能为空")
-            
+
             # 使用Gemini原生API端点
             url = f"https://generativelanguage.googleapis.com/v1/models?key={api_key}"
             response = requests.get(url, timeout=10)
-            
+
             if response.status_code == 200:
                 data = response.json()
                 models = []
@@ -173,7 +99,7 @@ class MultiModelAdapter:
         try:
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             response = requests.get(f"{base_url}/models", headers=headers, timeout=10)
-            
+
             if response.status_code == 200:
                 data = response.json()
                 models = []
@@ -181,7 +107,7 @@ class MultiModelAdapter:
                     model_id = model_data.get("id", "")
                     models.append(model_id)
                     print(f"获得的id是{model_id}")
-                
+
                 # 添加嵌入模型列表
                 if provider == "dashscope":
                     embedding_models = [
@@ -203,7 +129,7 @@ class MultiModelAdapter:
                         "qwen/qwen3-embedding-4b"
                     ]
                     models.extend(embedding_models)
-                
+
                 return models
             else:
                 # 如果API调用失败，抛出错误，包含原始状态码和响应内容

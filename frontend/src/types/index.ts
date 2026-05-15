@@ -49,7 +49,6 @@ export type {
   Message,
   InterruptValue,
   Interrupt,
-  InterruptResponse,
   PregelTask,
   Config,
   StateMetadata,

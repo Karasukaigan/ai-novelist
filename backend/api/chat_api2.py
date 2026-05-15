@@ -9,6 +9,7 @@ from litellm import acompletion
 import json
 import logging
 import asyncio
+import math
 import uuid
 import time
 from pydantic import BaseModel, Field
@@ -39,6 +40,71 @@ def _get_model_prefix(provider: str) -> str:
         return provider
     else:
         return "openai"
+
+
+def _count_tokens_approx(msg: dict) -> int:
+    """估算单条消息的 token 数，对齐 langchain count_tokens_approximately"""
+    chars = len(str(msg.get("content", "")))
+    chars += len(msg.get("role", ""))
+    if msg.get("role") == "assistant" and msg.get("tool_calls"):
+        chars += len(repr(msg["tool_calls"]))
+    if msg.get("role") == "tool":
+        chars += len(msg.get("tool_call_id", ""))
+    return math.ceil(chars / 4.0) + 3
+
+
+def _trim_history(history: list[dict], max_tokens: int) -> list[dict]:
+    """裁剪消息历史，对齐旧版 trim_messages(strategy=last, start_on=human, end_on=(human,tool))"""
+    if not history:
+        return []
+
+    msgs = list(history)
+
+    # Step 1: end_on — 从末尾截断到 user 或 tool
+    while msgs and msgs[-1].get("role") not in ("user", "tool"):
+        msgs.pop()
+
+    if not msgs:
+        return []
+
+    # Step 2: 从尾到头累计 token，保留不超限的消息
+    kept = []
+    token_count = 0
+    for msg in reversed(msgs):
+        t = _count_tokens_approx(msg)
+        if token_count + t > max_tokens:
+            break
+        kept.insert(0, msg)
+        token_count += t
+
+    # Step 3: start_on — 去掉开头不是 user 的消息
+    while kept and kept[0].get("role") != "user":
+        kept.pop(0)
+
+    return kept
+
+
+def _collect_summaries_and_filter(history: list[dict], summaries: list[dict]) -> tuple[str, list[dict]]:
+    """收集摘要文本并过滤被替换的消息，返回 (summary_text, filtered_history)"""
+    if not summaries:
+        return "", list(history)
+
+    # 收集所有被替换的消息 id
+    skip_ids: set[str] = set()
+    for s in summaries:
+        # 从 history 中找到 replaces_from 到 replaces_to 之间的消息
+        in_range = False
+        for m in history:
+            if m["id"] == s["replaces_from"]:
+                in_range = True
+            if in_range:
+                skip_ids.add(m["id"])
+            if m["id"] == s["replaces_to"]:
+                break
+
+    summary_text = "\n\n".join(s["content"] for s in summaries)
+    filtered = [m for m in history if m["id"] not in skip_ids]
+    return summary_text, filtered
 
 
 def _tool_to_openai_schema(tool) -> dict:
@@ -81,6 +147,7 @@ class FunctionCallingRequest(BaseModel):
     tool_call_id: str = Field(..., description="工具调用ID")
     approved: bool = Field(..., description="是否批准")
     user_extra: str = Field(default="", description="用户附加信息")
+    user_diff: str | None = Field(default=None, description="用户对AI建议内容的修改diff")
 
 
 def _build_state_update_data(thread_id: str) -> str:
@@ -94,6 +161,7 @@ def _build_state_update_data(thread_id: str) -> str:
         "active_path": tree["active_path"],
         "branch_points": tree["branch_points"],
         "tool_requests": data.get("tool_requests", {}),
+        "summaries": data.get("summaries", []),
     }, ensure_ascii=False) + "\n"
 
 
@@ -101,7 +169,7 @@ async def _build_messages_with_context(
     history: list[dict],
     mode: str,
     user_input: str = "",
-    summary: str = ""
+    summaries: list[dict] | None = None,
 ) -> list[dict]:
     """将系统提示词和环境信息注入到消息列表中
 
@@ -110,10 +178,15 @@ async def _build_messages_with_context(
 
     注入的消息不持久化到数据库，每次调用时动态构建。
     """
+    # 收集摘要文本
+    summary_text = ""
+    if summaries:
+        summary_text = "\n\n".join(s["content"] for s in summaries)
+
     system_prompt, context_message = await _system_prompt_builder.build_prompts(
         mode=mode,
         user_input=user_input,
-        summary=summary
+        summary=summary_text,
     )
 
     result = []
@@ -156,7 +229,21 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
         if msg.get("role") == "user":
             user_input = msg.get("content", "")
             break
-    messages_with_context = await _build_messages_with_context(history, mode, user_input)
+
+    # 收集摘要并过滤被替换的消息
+    data = storage.get_data(thread_id)
+    summaries = data.get("summaries", [])
+    summary_text, filtered_history = _collect_summaries_and_filter(history, summaries)
+
+    # 裁剪超限消息
+    context_window = settings.get_config(
+        "provider", selected_provider, "favoriteModels", "chat", selected_model
+    ) or 4096
+    trimmed_history = _trim_history(filtered_history, context_window - max_tokens)
+
+    messages_with_context = await _build_messages_with_context(
+        trimmed_history, mode, user_input, summaries
+    )
 
     call_kwargs = {
         "model": litellm_model,
@@ -179,11 +266,22 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
     full_content = ""
     full_reasoning = ""
     tool_calls_accumulated: dict[int, dict] = {}
+    usage_metadata: dict | None = None
 
     async for chunk in response_stream:
         if stream_interrupt_manager.is_interrupted(thread_id):
             yield json.dumps({"interrupted": True}, ensure_ascii=False) + "\n"
             break
+
+        # 捕获 usage（DeepSeek 等提供商将 usage 放在最后一个有 choices 的 chunk 中，而非空 choices chunk）
+        if hasattr(chunk, 'usage') and chunk.usage:
+            usage_metadata = {
+                "input_tokens": chunk.usage.prompt_tokens,
+                "output_tokens": chunk.usage.completion_tokens,
+                "total_tokens": chunk.usage.total_tokens,
+            }
+            logger.info(f"[usage] 捕获到 usage: {usage_metadata}")
+            yield json.dumps({"usage_metadata": usage_metadata}, ensure_ascii=False) + "\n"
 
         if not chunk.choices:
             continue
@@ -242,6 +340,8 @@ async def _stream_ai_response(thread_id: str, parent_msg_id: str, history: list[
         assistant_msg["additional_kwargs"]["reasoning_content"] = full_reasoning
     if tool_calls_accumulated:
         assistant_msg["tool_calls"] = list(tool_calls_accumulated.values())
+    if usage_metadata:
+        assistant_msg["usage_metadata"] = usage_metadata
 
     data = storage.get_data(thread_id)
     data.setdefault("messages", []).append(assistant_msg)
@@ -393,11 +493,15 @@ async def function_calling(request: FunctionCallingRequest):
 
     # 获取当前 active_leaf 作为 tool 消息的 parent_id
     tool_parent_id = data.get("active_leaf")
+    # 如果有用户diff，附加到工具结果中
+    tool_content = result_json
+    if request.user_diff:
+        tool_content += f"\n\n[用户修改了文件内容]：\n{request.user_diff}"
     tool_msg = {
         "id": f"msg-{uuid.uuid4()}",
         "role": "tool",
         "tool_call_id": request.tool_call_id,
-        "content": result_json,
+        "content": tool_content,
         "parent_id": tool_parent_id,
         "created_at": time.time(),
     }
@@ -447,3 +551,85 @@ async def function_calling(request: FunctionCallingRequest):
             stream_interrupt_manager.remove_task(thread_id)
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+# ==================== 上下文压缩 ====================
+
+
+class SummarizeRequest(BaseModel):
+    thread_id: str = Field(..., description="要压缩的会话 id")
+
+
+@router.post("/summarize", summary="压缩上下文（生成摘要）")
+async def summarize_context(request: SummarizeRequest):
+    """手动触发上下文压缩，生成摘要存入 data.summaries"""
+    thread_id = request.thread_id
+    logger.info(f"压缩上下文: thread_id={thread_id}")
+
+    data = storage.get_data(thread_id)
+    history = storage.get_active_path(thread_id)
+    summaries = data.get("summaries", [])
+
+    if len(history) < 2:
+        return {"success": False, "detail": "消息太少，无需压缩"}
+
+    # 确定替换范围：压缩全部 active_path 消息
+    replaces_from = history[0]["id"]
+    replaces_to = history[-1]["id"]
+
+    # 拼接总结 prompt（使用中文提示词，输出中文摘要）
+    if summaries:
+        existing = "\n\n".join(s["content"] for s in summaries)
+        prompt = (
+            f"以下是到目前为止的对话摘要：\n{existing}\n\n"
+            "请根据以上对话和新的对话内容，用中文扩展或更新这个摘要。"
+        )
+    else:
+        prompt = (
+            "请用中文总结以上对话的主要内容，"
+            "提取关键信息、重要决定和用户需求，形成一份简洁的对话摘要。"
+        )
+
+    # 构建总结消息（不含系统提示词和环境信息，纯对话历史）
+    summarize_messages = list(history)
+    summarize_messages.append({"role": "user", "content": prompt})
+
+    # 调用总结模型
+    api_key = settings.get_provider_key(selected_provider)
+    base_url = settings.get_config("provider", selected_provider, "url", default="")
+    litellm_model = f"{_get_model_prefix(selected_provider)}/{selected_model}"
+
+    try:
+        response = await acompletion(
+            model=litellm_model,
+            messages=summarize_messages,
+            temperature=temperature,
+            max_tokens=1024,
+            timeout=120,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        summary_content = response.choices[0].message.content or ""
+    except Exception as e:
+        logger.error(f"总结模型调用失败: {e}")
+        return {"success": False, "detail": f"总结失败: {str(e)}"}
+
+    # 存入 data.summaries
+    data.setdefault("summaries", [])
+    data["summaries"].append({
+        "content": summary_content,
+        "replaces_from": replaces_from,
+        "replaces_to": replaces_to,
+        "created_at": time.time(),
+    })
+    storage.save_data(thread_id, data)
+
+    # 返回完整树信息（含 summaries）
+    tree = storage.get_full_tree(thread_id)
+    return {
+        "messages": tree["messages"],
+        "active_leaf": tree["active_leaf"],
+        "active_path": tree["active_path"],
+        "branch_points": tree["branch_points"],
+        "summaries": data.get("summaries", []),
+    }

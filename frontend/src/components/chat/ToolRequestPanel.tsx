@@ -5,6 +5,7 @@ import type { ToolCall, ToolRequestData } from '../../types/langgraph';
 import { setCurrentToolRequest, setIsStreaming, createAiMessage, updateAiMessage, addUserMessage, addToolMessage, setMessage, setMessagesTree } from '../../store/chat';
 import { exitDiffMode, saveTabContent, decreaseTab, clearAiSuggestContent } from '../../store/editor';
 import { FILE_TOOLS, useFileToolHandler } from '../../utils/fileToolHandler';
+import { computeDiff, hasDiff } from '../../utils/diffUtils';
 import httpClient from '../../utils/httpClient';
 
 const ToolRequestPanel = () => {
@@ -13,6 +14,8 @@ const ToolRequestPanel = () => {
   const currentToolRequest = useSelector((state: RootState) => state.chatSlice.currentToolRequest);
   const message = useSelector((state: RootState) => state.chatSlice.message);
   const autoApproveEnabled = useSelector((state: RootState) => state.chatSlice.autoApproveEnabled);
+  const currentData = useSelector((state: RootState) => state.tabSlice.currentData);
+  const aiSuggestContent = useSelector((state: RootState) => state.tabSlice.aiSuggestContent);
   const autoApproveRef = useRef(false);
 
   // 生成唯一消息ID
@@ -34,20 +37,27 @@ const ToolRequestPanel = () => {
     dispatch(setCurrentToolRequest(null));
     dispatch(setMessage(''));
 
-    // 清理文件工具的差异对比视图
+    // 计算用户对AI建议内容的修改 diff
+    let userDiff: string | null = null;
     if (argsStr && FILE_TOOLS.includes(toolName)) {
       try {
         const args = JSON.parse(argsStr);
         const path: string | undefined = args.path;
         if (path) {
-          dispatch(exitDiffMode({ id: path }));
           if (approved) {
+            const aiContent = aiSuggestContent[path];
+            const currentContent = currentData[path];
+            if (aiContent !== undefined && currentContent !== undefined && hasDiff(aiContent, currentContent)) {
+              userDiff = computeDiff(aiContent, currentContent);
+              console.log('用户修改了AI建议内容，diff:', userDiff);
+            }
             // 批准：同步 currentData 到 backUp
             dispatch(saveTabContent({ id: path }));
           } else {
             // 拒绝：关闭标签
             dispatch(decreaseTab({ tabId: path }));
           }
+          dispatch(exitDiffMode({ id: path }));
           dispatch(clearAiSuggestContent({ id: path }));
         }
       } catch (e) {
@@ -69,6 +79,7 @@ const ToolRequestPanel = () => {
           tool_call_id: currentToolRequest.tool_call_id,
           approved,
           user_extra: extra,
+          user_diff: userDiff || undefined,
         }
       } as any);
 

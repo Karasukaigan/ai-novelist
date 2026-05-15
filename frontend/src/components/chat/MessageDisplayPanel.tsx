@@ -236,6 +236,15 @@ const MessageDisplayPanel = () => {
               dispatch(updateAiMessage(updateData));
             }
 
+            // 上下文用量（流结束时后端通过 usage chunk 返回）
+            if (parsedChunk.usage_metadata && currentAiMessageId) {
+              dispatch(updateAiMessage({
+                id: currentAiMessageId,
+                content: newAiResponse,
+                usage_metadata: parsedChunk.usage_metadata
+              }));
+            }
+
             // 流式 tool_calls（后端已合并，直接替换）
             if (parsedChunk.tool_calls && parsedChunk.tool_calls.length > 0) {
               for (const tc of parsedChunk.tool_calls) {

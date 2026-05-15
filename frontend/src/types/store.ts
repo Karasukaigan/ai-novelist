@@ -11,6 +11,7 @@ import type {
   ToolRequestData,
   UsageMetadata,
   BranchPoint,
+  Summary,
   Message,
 } from './langgraph';
 
@@ -54,6 +55,8 @@ export interface ChatState {
   activeLeaf: string | null;
   /** 分支树：分支点信息 */
   branchPoints: BranchPoint[];
+  /** 上下文压缩摘要列表 */
+  summaries: Summary[];
 }
 
 // ==================== Editor Store ====================

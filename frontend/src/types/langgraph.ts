@@ -91,13 +91,6 @@ export interface ToolRequestData {
   result: { success: boolean; detail: string } | null;
 }
 
-// 中断响应接口
-export interface InterruptResponse {
-  action: 'approve' | 'reject';
-  choice?: string;
-  additionalData?: string;
-}
-
 // 任务
 export interface PregelTask {
   id: string;
@@ -168,4 +161,12 @@ export interface ToolCallChunk {
   id?: string | null;
   index?: number;
   type?: string;
+}
+
+// 上下文压缩摘要
+export interface Summary {
+  content: string;
+  replaces_from: string;
+  replaces_to: string;
+  created_at: number;
 }
